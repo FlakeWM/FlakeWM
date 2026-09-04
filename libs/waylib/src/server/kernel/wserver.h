@@ -1,0 +1,170 @@
+// Copyright (C) 2023-2026 UnionTech Software Technology Co., Ltd.
+// SPDX-License-Identifier: Apache-2.0 OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+
+#pragma once
+
+#include <wglobal.h>
+
+#include <QDeadlineTimer>
+#include <QFuture>
+#include <QObject>
+
+#include <functional>
+
+QT_BEGIN_NAMESPACE
+class QPlatformTheme;
+class QProcess;
+QT_END_NAMESPACE
+
+struct wl_display;
+struct wl_global;
+
+Q_MOC_INCLUDE("private/wserver_p.h")
+WAYLIB_SERVER_BEGIN_NAMESPACE
+
+typedef bool (*GlobalFilterFunc)(const wl_client *client,
+                                 const wl_global *global,
+                                 void *data);
+
+class WServer;
+class WSocket;
+class WClient;
+class WAYLIB_SERVER_EXPORT WServerInterface
+{
+public:
+    virtual ~WServerInterface() {}
+    inline void *handle() const {
+        return m_handle;
+    }
+    inline bool isValid() const {
+        return m_handle;
+    }
+
+    template<typename DNativeInterface>
+    DNativeInterface *nativeInterface() const {
+        return reinterpret_cast<DNativeInterface*>(handle());
+    }
+
+    inline WServer *server() const {
+        return m_server;
+    }
+
+    inline std::function<bool(WClient*)> filter() const {
+        return m_filter;
+    }
+
+    inline void setFilter(std::function<bool(WClient*)> f) {
+        m_filter = f;
+    }
+
+    virtual QByteArrayView interfaceName() const = 0;
+
+protected:
+    void *m_handle = nullptr;
+    WServer *m_server = nullptr;
+    std::function<bool(WClient*)> m_filter;
+
+    virtual void create([[maybe_unused]] WServer *server) {
+    }
+    virtual void destroy([[maybe_unused]] WServer *server) {
+    }
+    virtual wl_global *global() const = 0;
+
+    friend class WServer;
+    friend class WServerPrivate;
+};
+
+class WSocket;
+class WServerPrivate;
+class WAYLIB_SERVER_EXPORT WServer : public QObject, public WObject
+{
+    Q_OBJECT
+    W_DECLARE_PRIVATE(WServer)
+    friend class WShellInterface;
+
+public:
+    explicit WServer(QObject *parent = nullptr);
+    ~WServer();
+
+    wl_display *handle() const;
+
+    void attach(WServerInterface *interface);
+    template<typename Interface, typename... Args>
+    Interface *attach(Args&&...args) {
+        static_assert(std::is_base_of<WServerInterface, Interface>::value,
+                "Not base of WServerInterface");
+        auto interface = new Interface(std::forward<Args>(args)...);
+        attach(interface);
+        return interface;
+    }
+    template<typename Interface>
+    Interface *attach() {
+        static_assert(std::is_base_of<WServerInterface, Interface>::value,
+                "Not base of WServerInterface");
+        auto interface = new Interface();
+        attach(interface);
+        return interface;
+    }
+    bool detach(WServerInterface *interface);
+
+    const QVector<WServerInterface *> &interfaceList() const;
+    QVector<WServerInterface*> findInterfaces(void *handle) const;
+    WServerInterface *findInterface(void *handle) const;
+    WServerInterface *findInterface(const wl_global *global) const;
+    template<typename Interface>
+    QVector<Interface*> findInterfaces() const {
+        QVector<Interface*> list;
+        for (auto i : interfaceList()) {
+            if (auto ii = dynamic_cast<Interface*>(i))
+                list << ii;
+        }
+
+        return list;
+    }
+    template<typename Interface>
+    Interface *findInterface() const {
+        for (auto i : interfaceList()) {
+            if (auto ii = dynamic_cast<Interface*>(i))
+                return ii;
+        }
+
+        return nullptr;
+    }
+
+    static WServer *from(WServerInterface *interface);
+
+    // Restart invariants (WM-194):
+    //  * stop() destroys the wl_display (and thus every wlr object that has
+    //    no public destroy() function — "free follow display"), but keeps
+    //    the WServerInterface wrapper objects alive. start() rebuilds the
+    //    display and calls create() again on every interface.
+    //  * Between stop() and the next start(), handle() is null and the wlr
+    //    handles behind interface->handle()/interface->global() have been
+    //    freed — do not dereference them. The interface objects themselves
+    //    remain valid and can be iterated/attached/detached.
+    //  * start() is a no-op when already running; stop() is a no-op when not
+    //    running, so stop()/start() may be cycled and called defensively.
+    void start();
+    void stop();
+    static void initializeQPA(
+        const QStringList &parameters = {},
+        std::function<QPlatformTheme *(const QString &)> createPlatformTheme = {});
+
+    bool isRunning() const;
+    void addSocket(WSocket *socket);
+
+    void setGlobalFilter(GlobalFilterFunc filter, void *data);
+
+Q_SIGNALS:
+    void started();
+
+protected:
+    WServer(WServerPrivate &dd, QObject *parent = nullptr);
+
+private:
+    W_PRIVATE_SLOT(void processWaylandEvents())
+    W_PRIVATE_SLOT(void onAboutToBlock())
+    W_PRIVATE_SLOT(void onAwake())
+};
+
+WAYLIB_SERVER_END_NAMESPACE

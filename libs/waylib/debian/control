@@ -1,0 +1,79 @@
+Source: waylib
+Section: libdevel
+Priority: optional
+Maintainer: JiDe Zhang <zhangjide@deepin.org>
+Build-Depends: cmake,
+               debhelper-compat (= 13),
+               ninja-build,
+               libpixman-1-dev (>= 0.43.0),
+               libxcb-ewmh-dev,
+               pkg-config,
+               qml6-module-qtquick-templates,
+               qt6-base-dev-tools (>= 6.6.0),
+               qt6-base-private-dev (>= 6.6.0),
+               qt6-declarative-private-dev (>= 6.6.0),
+               wayland-protocols (>= 1.41),
+               wlr-protocols,
+               libwayland-dev (>= 1.23.1),
+               libxkbcommon-dev,
+               libudev-dev,
+               libseat-dev,
+               libdisplay-info-dev (>= 0.1.1),
+               libliftoff-dev (>= 0.4.1),
+               liblcms2-dev,
+               libinput-dev,
+               libegl1-mesa-dev,
+               libegl-dev,
+               libgbm-dev,
+               libgles2-mesa-dev,
+               libvulkan-dev,
+               glslang-tools,
+               hwdata,
+               libcap-dev,
+               libcairo2-dev,
+               libdrm-dev (>= 2.4.122),
+               libpixman-1-dev (>= 0.43.0),
+               libpng-dev,
+               libx11-xcb-dev,
+               libxcb1-dev,
+               libxcb-composite0-dev,
+               libxcb-dri3-dev,
+               libxcb-errors-dev,
+               libxcb-ewmh-dev,
+               libxcb-icccm4-dev,
+               libxcb-image0-dev,
+               libxcb-present-dev,
+               libxcb-render0-dev,
+               libxcb-render-util0-dev,
+               libxcb-res0-dev,
+               libxcb-shm0-dev,
+               libxcb-xfixes0-dev,
+               libxcb-xinput-dev,
+               xwayland,
+               treeland-protocols,
+Standards-Version: 3.9.8
+
+Package: libwaylib
+Architecture: any
+Depends: ${misc:Depends}, ${shlibs:Depends}
+Conflicts: qwlroots
+Replaces: qwlroots
+Multi-Arch: same
+Description:  A wrapper for wlroots based on Qt
+ .
+ This package contains the shared libraries.
+
+Package: libwaylib-dev
+Architecture: any
+Depends: libwaylib (=${binary:Version}),
+         qt6-base-dev-tools (>= 6.6.0),
+         qt6-base-private-dev (>= 6.6.0),
+         qt6-declarative-private-dev (>= 6.6.0),
+         wlr-protocols,
+         ${misc:Depends},
+         ${shlibs:Depends}
+Conflicts: qwlroots
+Replaces: qwlroots
+Description: A devel package for libwaylib
+ .
+ This package contains the header files and static libraries of waylib.
