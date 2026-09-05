@@ -42,6 +42,7 @@
 
 #include "src/utils/args_handler/args_handler.h"
 #include "src/utils/misc/misc.h"
+#include "src/xwayland/xwayland.h"
 
 namespace flakewm {
 namespace core {
@@ -113,7 +114,8 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
   }
 
   // Publish basic globals required by regular Wayland clients.
-  if (wlr_compositor_create(display_, 5, renderer_) == nullptr) {
+  compositor_ = wlr_compositor_create(display_, 5, renderer_);
+  if (compositor_ == nullptr) {
     return Fail("Failed to create wl_compositor global");
   }
   if (wlr_subcompositor_create(display_) == nullptr) {
@@ -228,6 +230,23 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
     return Fail("Failed to start wlroots backend");
   }
 
+  // Start XWayland, if enabled.
+  if (!startup_args.disable_xwayland) {
+    xwayland_ = std::make_unique<xwayland::XWayland>(this);
+    if (!xwayland_->Start(display_, compositor_)) {
+      ABSL_LOG(ERROR) << "Failed to initialize XWayland, module skipped.";
+      xwayland_.reset();
+      unsetenv("DISPLAY");
+    } else {
+      setenv("DISPLAY", xwayland_->DisplayName(), 1);
+      ABSL_LOG(INFO) << "XWayland listening on DISPLAY="
+                     << xwayland_->DisplayName();
+    }
+  } else {
+    // Never leak nested clients into the host X server when support is off.
+    unsetenv("DISPLAY");
+  }
+
   // Handle normal termination inside the Wayland event loop.
   wl_event_loop* event_loop = wl_display_get_event_loop(display_);
   signal_sources_[0] =
@@ -245,10 +264,6 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
   setenv("XDG_SESSION_DESKTOP", "FlakeWM", 1);
   setenv("XDG_SESSION_TYPE", "wayland", 1);
 
-  // Do not let clients escape to the host X server while XWayland is absent.
-  // A real XWayland display will replace this when support is wired up.
-  unsetenv("DISPLAY");
-
   // Start the user session only when one was requested.
   if (!startup_args.process.empty() && !Spawn(startup_args.process)) {
     return false;
@@ -258,8 +273,7 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
   ABSL_LOG(INFO) << "Running on WAYLAND_DISPLAY=" << socket_name_ << " ("
                  << (nested_ ? "nested" : "native") << ")";
   ABSL_LOG(INFO) << "XWayland "
-                 << (startup_args.disable_xwayland ? "disabled"
-                                                   : "not initialized yet");
+                 << (xwayland_ != nullptr ? "enabled" : "disabled");
   return true;
 }
 
@@ -402,37 +416,107 @@ void CompositorPrivate::Keyboard::OnDestroy(Keyboard* keyboard, void*) {
 
 CompositorPrivate::Toplevel::Toplevel(CompositorPrivate* compositor,
                                       wlr_xdg_toplevel* toplevel)
-    : compositor(compositor),
-      handle(toplevel),
-      map(this, OnMap),
-      unmap(this, OnUnmap),
-      commit(this, OnCommit),
-      destroy(this, OnDestroy),
-      request_move(this, OnRequestMove),
-      request_resize(this, OnRequestResize),
-      request_maximize(this, OnRequestMaximize),
-      request_minimize(this, OnRequestMinimize),
-      request_fullscreen(this, OnRequestFullscreen) {}
+    : compositor(compositor), handle(toplevel) {}
+
+CompositorPrivate::Toplevel::Toplevel(CompositorPrivate* compositor)
+    : compositor(compositor) {}
+
+bool CompositorPrivate::Toplevel::IsAlive() const {
+  return handle != nullptr;
+}
+
+bool CompositorPrivate::Toplevel::IsXWayland() const {
+  return false;
+}
+
+bool CompositorPrivate::Toplevel::WantsFocus() const {
+  return true;
+}
+
+bool CompositorPrivate::Toplevel::CanManage() const {
+  return true;
+}
+
+bool CompositorPrivate::Toplevel::RequestedMaximized() const {
+  return handle != nullptr && handle->requested.maximized;
+}
+
+bool CompositorPrivate::Toplevel::RequestedFullscreen() const {
+  return handle != nullptr && handle->requested.fullscreen;
+}
+
+wlr_surface* CompositorPrivate::Toplevel::Surface() const {
+  return handle == nullptr ? nullptr : handle->base->surface;
+}
+
+wlr_box CompositorPrivate::Toplevel::Geometry() const {
+  return handle == nullptr ? wlr_box{} : handle->base->geometry;
+}
+
+void CompositorPrivate::Toplevel::Configure(const wlr_box& box) const {
+  if (scene_tree == nullptr || box.width <= 0 || box.height <= 0) {
+    return;
+  }
+
+  const wlr_box geometry = Geometry();
+  wlr_scene_node_set_position(&scene_tree->node, box.x - geometry.x,
+                              box.y - geometry.y);
+  if (handle != nullptr) {
+    wlr_xdg_toplevel_set_size(handle, box.width, box.height);
+  }
+}
+
+void CompositorPrivate::Toplevel::SetActivated(bool activated) const {
+  if (handle != nullptr) {
+    wlr_xdg_toplevel_set_activated(handle, activated);
+  }
+}
+
+void CompositorPrivate::Toplevel::SetMaximizedState(bool maximized) const {
+  if (handle != nullptr) {
+    wlr_xdg_toplevel_set_maximized(handle, maximized);
+  }
+}
+
+void CompositorPrivate::Toplevel::SetMinimizedState(bool) const {}
+
+void CompositorPrivate::Toplevel::SetFullscreenState(bool fullscreen) const {
+  if (handle != nullptr) {
+    wlr_xdg_toplevel_set_fullscreen(handle, fullscreen);
+  }
+}
+
+void CompositorPrivate::Toplevel::Restack() const {}
 
 void CompositorPrivate::Toplevel::OnMap(Toplevel* toplevel, void*) {
   // Honor the initial state request before focusing the new window.
   toplevel->mapped = true;
-  if (toplevel->handle->requested.maximized) {
+  wlr_scene_node_set_enabled(&toplevel->scene_tree->node, true);
+  if (toplevel->RequestedMaximized() && toplevel->CanManage()) {
     toplevel->compositor->SetMaximized(toplevel, true);
   }
-  toplevel->compositor->FocusToplevel(toplevel);
+  if (toplevel->WantsFocus()) {
+    toplevel->compositor->FocusToplevel(toplevel);
+  }
 }
 
 void CompositorPrivate::Toplevel::OnUnmap(Toplevel* toplevel, void*) {
   // Stop any grab which still belongs to this window.
+  const bool had_focus =
+      toplevel->Surface() != nullptr &&
+      toplevel->compositor->seat_->keyboard_state.focused_surface ==
+          toplevel->Surface();
   toplevel->mapped = false;
   if (toplevel->compositor->grabbed_toplevel_ == toplevel) {
     toplevel->compositor->ResetCursorMode();
   }
+
+  if (had_focus) {
+    toplevel->compositor->FocusNextToplevel(toplevel);
+  }
 }
 
 void CompositorPrivate::Toplevel::OnCommit(Toplevel* toplevel, void*) {
-  // The XDG handle may already be gone while its last commit is handled.
   if (toplevel->handle == nullptr) {
     return;
   }
@@ -451,7 +535,7 @@ void CompositorPrivate::Toplevel::OnCommit(Toplevel* toplevel, void*) {
 
   // Client-side decorations can change their geometry after configure.
   // Re-align the window using the geometry from the latest commit.
-  const wlr_box& geometry = toplevel->handle->base->geometry;
+  const wlr_box geometry = toplevel->Geometry();
   if (toplevel->maximized && toplevel->maximized_box.width > 0 &&
       toplevel->maximized_box.height > 0) {
     wlr_scene_node_set_position(&toplevel->scene_tree->node,
@@ -467,25 +551,20 @@ void CompositorPrivate::Toplevel::OnCommit(Toplevel* toplevel, void*) {
 
 void CompositorPrivate::Toplevel::OnRequestMaximize(Toplevel* toplevel, void*) {
   // Apply the state requested by the client.
-  if (toplevel->handle != nullptr) {
+  if (toplevel->CanManage()) {
     toplevel->compositor->SetMaximized(toplevel,
-                                       toplevel->handle->requested.maximized);
+                                       toplevel->RequestedMaximized());
   }
 }
 
 void CompositorPrivate::Toplevel::OnRequestMinimize(Toplevel* toplevel, void*) {
   // Minimize hides the scene node until another shell component restores it.
-  if (toplevel->handle != nullptr) {
-    toplevel->compositor->Minimize(toplevel);
-  }
+  toplevel->compositor->Minimize(toplevel);
 }
 
 void CompositorPrivate::Toplevel::OnRequestFullscreen(Toplevel* toplevel,
                                                       void*) {
-  // Fullscreen is not handled yet, acknowledge the request for now.
-  if (toplevel->handle != nullptr && toplevel->handle->base->initialized) {
-    wlr_xdg_surface_schedule_configure(toplevel->handle->base);
-  }
+  toplevel->SetFullscreenState(toplevel->RequestedFullscreen());
 }
 
 void CompositorPrivate::Toplevel::OnRequestMove(Toplevel* toplevel, void*) {
@@ -501,7 +580,7 @@ void CompositorPrivate::Toplevel::OnRequestResize(
 }
 
 void CompositorPrivate::Toplevel::OnDestroy(Toplevel* toplevel, void*) {
-  // End its active grab before disconnecting the XDG listeners.
+  // End its active grab before disconnecting protocol listeners.
   if (toplevel->compositor->grabbed_toplevel_ == toplevel) {
     toplevel->compositor->ResetCursorMode();
   }
@@ -554,7 +633,6 @@ void CompositorPrivate::UpdateSeatCapabilities() {
 }
 
 void CompositorPrivate::AddKeyboard(wlr_input_device* device) {
-  // Use the system defaults for the keyboard layout.
   wlr_keyboard* handle = wlr_keyboard_from_input_device(device);
   xkb_context* context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
   xkb_keymap* keymap = context == nullptr
@@ -633,7 +711,8 @@ CompositorPrivate::Toplevel* CompositorPrivate::ToplevelAt(
 
 void CompositorPrivate::FocusToplevel(Toplevel* toplevel) {
   // Ignore windows which cannot receive focus.
-  if (toplevel == nullptr || !toplevel->mapped || toplevel->handle == nullptr) {
+  if (toplevel == nullptr || !toplevel->mapped || !toplevel->IsAlive() ||
+      toplevel->Surface() == nullptr || !toplevel->WantsFocus()) {
     return;
   }
 
@@ -649,7 +728,7 @@ void CompositorPrivate::FocusToplevel(Toplevel* toplevel) {
     }
   }
 
-  wlr_surface* surface = toplevel->handle->base->surface;
+  wlr_surface* surface = toplevel->Surface();
   wlr_surface* previous_surface = seat_->keyboard_state.focused_surface;
   if (previous_surface == surface) {
     return;
@@ -661,11 +740,18 @@ void CompositorPrivate::FocusToplevel(Toplevel* toplevel) {
     if (previous != nullptr) {
       wlr_xdg_toplevel_set_activated(previous, false);
     }
+
+    wlr_xwayland_surface* previous_xwayland =
+        wlr_xwayland_surface_try_from_wlr_surface(previous_surface);
+    if (previous_xwayland != nullptr) {
+      wlr_xwayland_surface_activate(previous_xwayland, false);
+    }
   }
 
   // Raise, activate and send the current keyboard state.
   wlr_scene_node_raise_to_top(&toplevel->scene_tree->node);
-  wlr_xdg_toplevel_set_activated(toplevel->handle, true);
+  toplevel->Restack();
+  toplevel->SetActivated(true);
   if (wlr_keyboard* keyboard = wlr_seat_get_keyboard(seat_);
       keyboard != nullptr) {
     wlr_seat_keyboard_notify_enter(seat_, surface, keyboard->keycodes,
@@ -692,7 +778,7 @@ void CompositorPrivate::FocusNextToplevel(Toplevel* excluding) {
        ++iterator) {
     Toplevel* candidate = iterator->get();
     if (candidate != excluding && candidate->mapped && !candidate->minimized &&
-        candidate->handle != nullptr) {
+        candidate->IsAlive()) {
       FocusToplevel(candidate);
       return;
     }
@@ -719,6 +805,12 @@ void CompositorPrivate::FocusLayerSurface(LayerSurface* layer_surface) {
         wlr_xdg_toplevel_try_from_wlr_surface(previous_surface);
     if (previous != nullptr) {
       wlr_xdg_toplevel_set_activated(previous, false);
+    }
+
+    wlr_xwayland_surface* previous_xwayland =
+        wlr_xwayland_surface_try_from_wlr_surface(previous_surface);
+    if (previous_xwayland != nullptr) {
+      wlr_xwayland_surface_activate(previous_xwayland, false);
     }
   }
 
@@ -823,36 +915,29 @@ void CompositorPrivate::ArrangeLayers(Output* output) {
 
   // Maximized windows follow changes made by panels and other exclusive layers.
   for (const std::unique_ptr<Toplevel>& toplevel : toplevels_) {
-    if (!toplevel->maximized || toplevel->handle == nullptr ||
+    if (!toplevel->maximized || !toplevel->IsAlive() ||
         toplevel->maximized_output != output->handle) {
       continue;
     }
-    const wlr_box& geometry = toplevel->handle->base->geometry;
     toplevel->maximized_box = output->usable_box;
-    wlr_scene_node_set_position(&toplevel->scene_tree->node,
-                                output->usable_box.x - geometry.x,
-                                output->usable_box.y - geometry.y);
-    wlr_xdg_toplevel_set_size(toplevel->handle, output->usable_box.width,
-                              output->usable_box.height);
+    toplevel->Configure(output->usable_box);
   }
 }
 
 void CompositorPrivate::SetMaximized(Toplevel* toplevel, bool maximized) {
-  // State changes need both an XDG handle and a scene node.
-  if (toplevel == nullptr || toplevel->handle == nullptr ||
+  // State changes need both a live protocol handle and a scene node.
+  if (toplevel == nullptr || !toplevel->IsAlive() ||
       toplevel->scene_tree == nullptr) {
     return;
   }
 
-  // Duplicate requests still need an XDG configure reply.
+  // Duplicate requests still need their client-visible state refreshed.
   if (maximized == toplevel->maximized) {
-    if (toplevel->handle->base->initialized) {
-      wlr_xdg_surface_schedule_configure(toplevel->handle->base);
-    }
+    toplevel->SetMaximizedState(maximized);
     return;
   }
 
-  const wlr_box& geometry = toplevel->handle->base->geometry;
+  const wlr_box geometry = toplevel->Geometry();
   if (maximized) {
     // Save geometry coordinates instead of the decorated surface origin.
     if (geometry.width > 0 && geometry.height > 0) {
@@ -875,11 +960,7 @@ void CompositorPrivate::SetMaximized(Toplevel* toplevel, bool maximized) {
     toplevel->maximized_box = UsableOutputBox(toplevel->maximized_output);
     if (toplevel->maximized_box.width > 0 &&
         toplevel->maximized_box.height > 0) {
-      wlr_scene_node_set_position(&toplevel->scene_tree->node,
-                                  toplevel->maximized_box.x - geometry.x,
-                                  toplevel->maximized_box.y - geometry.y);
-      wlr_xdg_toplevel_set_size(toplevel->handle, toplevel->maximized_box.width,
-                                toplevel->maximized_box.height);
+      toplevel->Configure(toplevel->maximized_box);
     }
     // A maximize request also brings a hidden window back.
     if (toplevel->minimized) {
@@ -888,11 +969,7 @@ void CompositorPrivate::SetMaximized(Toplevel* toplevel, bool maximized) {
     }
   } else if (toplevel->has_restore_box) {
     // Restore now, then correct CSD offsets on the next commit.
-    wlr_scene_node_set_position(&toplevel->scene_tree->node,
-                                toplevel->restore_box.x - geometry.x,
-                                toplevel->restore_box.y - geometry.y);
-    wlr_xdg_toplevel_set_size(toplevel->handle, toplevel->restore_box.width,
-                              toplevel->restore_box.height);
+    toplevel->Configure(toplevel->restore_box);
     toplevel->restore_position_pending = true;
   }
 
@@ -901,7 +978,7 @@ void CompositorPrivate::SetMaximized(Toplevel* toplevel, bool maximized) {
   if (!maximized) {
     toplevel->maximized_output = nullptr;
   }
-  wlr_xdg_toplevel_set_maximized(toplevel->handle, maximized);
+  toplevel->SetMaximizedState(maximized);
 }
 
 void CompositorPrivate::ToggleMaximized(Toplevel* toplevel) {
@@ -918,10 +995,10 @@ void CompositorPrivate::Minimize(Toplevel* toplevel) {
     return;
   }
   toplevel->minimized = true;
+  toplevel->SetMinimizedState(true);
   wlr_scene_node_set_enabled(&toplevel->scene_tree->node, false);
   // Move keyboard focus away if this was the active window.
-  if (seat_->keyboard_state.focused_surface ==
-      toplevel->handle->base->surface) {
+  if (seat_->keyboard_state.focused_surface == toplevel->Surface()) {
     FocusNextToplevel(toplevel);
   }
   wlr_seat_pointer_clear_focus(seat_);
@@ -941,7 +1018,7 @@ void CompositorPrivate::RestoreForMove(Toplevel* toplevel) {
           ? std::clamp((cursor_->x - output_box.x) / output_box.width, 0.0, 1.0)
           : 0.5;
   const wlr_box restore_box = toplevel->restore_box;
-  const wlr_box geometry = toplevel->handle->base->geometry;
+  const wlr_box geometry = toplevel->Geometry();
   const double titlebar_offset = std::clamp(
       cursor_->y - (toplevel->scene_tree->node.y + geometry.y), 0.0, 48.0);
 
@@ -967,12 +1044,12 @@ bool CompositorPrivate::IsTitlebarPoint(const Toplevel* toplevel,
                                         wlr_surface* surface,
                                         double surface_y) const {
   // Only the main surface owns the client-side titlebar.
-  if (toplevel == nullptr || toplevel->handle == nullptr ||
-      surface != toplevel->handle->base->surface) {
+  if (toplevel == nullptr || !toplevel->IsAlive() ||
+      surface != toplevel->Surface()) {
     return false;
   }
   // GTK and common CSD titlebars fit inside the first 48 pixels.
-  const int geometry_y = toplevel->handle->base->geometry.y;
+  const int geometry_y = toplevel->Geometry().y;
   return surface_y >= geometry_y && surface_y < geometry_y + 48;
 }
 
@@ -1018,7 +1095,7 @@ void CompositorPrivate::BeginInteractive(Toplevel* toplevel, CursorMode mode,
   }
 
   // Resize grabs use global geometry and the requested border.
-  grab_box_ = toplevel->handle->base->geometry;
+  grab_box_ = toplevel->Geometry();
   grab_box_.x += toplevel->scene_tree->node.x;
   grab_box_.y += toplevel->scene_tree->node.y;
   const double border_x =
@@ -1031,14 +1108,22 @@ void CompositorPrivate::BeginInteractive(Toplevel* toplevel, CursorMode mode,
 
 void CompositorPrivate::ProcessInteractiveMotion() {
   // A destroyed grab target returns the cursor to passthrough mode.
-  if (grabbed_toplevel_ == nullptr || grabbed_toplevel_->handle == nullptr) {
+  if (grabbed_toplevel_ == nullptr || !grabbed_toplevel_->IsAlive()) {
     ResetCursorMode();
     return;
   }
   // Move the whole scene tree and watch for the top output edge.
   if (cursor_mode_ == CursorMode::kMove) {
-    wlr_scene_node_set_position(&grabbed_toplevel_->scene_tree->node,
-                                cursor_->x - grab_x_, cursor_->y - grab_y_);
+    const int x = cursor_->x - grab_x_;
+    const int y = cursor_->y - grab_y_;
+    if (grabbed_toplevel_->IsXWayland()) {
+      wlr_box box = grabbed_toplevel_->Geometry();
+      box.x = x;
+      box.y = y;
+      grabbed_toplevel_->Configure(box);
+    } else {
+      wlr_scene_node_set_position(&grabbed_toplevel_->scene_tree->node, x, y);
+    }
     maximize_on_release_ = CursorAtOutputTop();
     return;
   }
@@ -1062,11 +1147,8 @@ void CompositorPrivate::ProcessInteractiveMotion() {
   }
 
   // Convert the new geometry position back to scene coordinates.
-  const wlr_box& geometry = grabbed_toplevel_->handle->base->geometry;
-  wlr_scene_node_set_position(&grabbed_toplevel_->scene_tree->node,
-                              left - geometry.x, top - geometry.y);
-  wlr_xdg_toplevel_set_size(grabbed_toplevel_->handle, right - left,
-                            bottom - top);
+  grabbed_toplevel_->Configure(
+      {.x = left, .y = top, .width = right - left, .height = bottom - top});
 }
 
 void CompositorPrivate::ProcessCursorMotion(uint32_t time_msec) {
@@ -1438,18 +1520,21 @@ void CompositorPrivate::Destroy() {
   cursor_motion_absolute_.Disconnect();
   cursor_motion_.Disconnect();
 
-  // If not yet released, release display.
-  if (display_ != nullptr) {
-    wl_display_destroy_clients(display_);
-  }
-
-  // Post-cleanups for cursors and surfaces.
+  // Drop local protocol wrappers while their wlroots objects still exist.
   ResetCursorMode();
   popups_.clear();
   layer_surfaces_.clear();
   toplevels_.clear();
   keyboards_.clear();
   outputs_.clear();
+
+  // The XWM owns a Wayland client.
+  // This also needs to be stopped.
+  xwayland_.reset();
+  unsetenv("DISPLAY");
+  if (display_ != nullptr) {
+    wl_display_destroy_clients(display_);
+  }
 
   // Clear scene nodes.
   if (scene_ != nullptr) {
@@ -1494,6 +1579,7 @@ void CompositorPrivate::Destroy() {
   if (display_ != nullptr) {
     wl_display_destroy(display_);
     display_ = nullptr;
+    compositor_ = nullptr;
     layer_shell_ = nullptr;
     xdg_shell_ = nullptr;
   }

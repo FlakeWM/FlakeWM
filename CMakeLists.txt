@@ -44,11 +44,23 @@ endif()
 
 include(cmake/wlroots.cmake)
 
+find_program(XWAYLAND_EXECUTABLE NAMES Xwayland REQUIRED)
+
+add_executable(flakewm-xwayland
+  src/xwayland/server.cc
+)
+
+target_compile_definitions(flakewm-xwayland PRIVATE
+  FLAKEWM_XWAYLAND_PATH="${XWAYLAND_EXECUTABLE}"
+)
+
 set(flakewm_CXX_SOURCES
   src/main.cc
   src/core/compositor/compositor.cc
   src/core/compositor_private/compositor_private.cc
   src/protocol/layer_shell/layer_surface.cc
+  src/xwayland/xsurface.cc
+  src/xwayland/xwayland.cc
   src/utils/args_handler/args_handler.cc
   src/utils/log/log.cc
   src/utils/misc/misc.cc
@@ -61,11 +73,16 @@ add_executable(flakewm
   src/core/compositor_private/compositor_private.h
   src/protocol/layer_shell/layer_surface.h
   src/protocol/layer_shell/wlr_layer_shell.h
+  src/xwayland/wlr_xwayland.h
+  src/xwayland/xsurface.h
+  src/xwayland/xwayland.h
   src/utils/args_handler/args_handler.h
   src/utils/log/log.h
   src/utils/misc/misc.h
   src/utils/signal_listener.h
 )
+
+add_dependencies(flakewm flakewm-xwayland)
 
 target_link_libraries(flakewm
   PRIVATE
@@ -104,6 +121,6 @@ endif()
 
 include(GNUInstallDirs)
 
-install(TARGETS flakewm
+install(TARGETS flakewm flakewm-xwayland
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )

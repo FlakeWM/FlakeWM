@@ -34,10 +34,19 @@
 #include "src/wlroots.h"
 
 namespace flakewm {
+namespace xwayland {
+
+class XSurface;
+class XWayland;
+
+}  // namespace xwayland
+
 namespace core {
 
 class CompositorPrivate final {
   friend class LayerSurface;
+  friend class xwayland::XSurface;
+  friend class xwayland::XWayland;
 
  public:
   CompositorPrivate();
@@ -93,6 +102,23 @@ class CompositorPrivate final {
 
   struct Toplevel {
     Toplevel(CompositorPrivate* compositor, wlr_xdg_toplevel* toplevel);
+    explicit Toplevel(CompositorPrivate* compositor);
+    virtual ~Toplevel() = default;
+
+    virtual bool IsAlive() const;
+    virtual bool IsXWayland() const;
+    virtual bool WantsFocus() const;
+    virtual bool CanManage() const;
+    virtual bool RequestedMaximized() const;
+    virtual bool RequestedFullscreen() const;
+    virtual wlr_surface* Surface() const;
+    virtual wlr_box Geometry() const;
+    virtual void Configure(const wlr_box& box) const;
+    virtual void SetActivated(bool activated) const;
+    virtual void SetMaximizedState(bool maximized) const;
+    virtual void SetMinimizedState(bool minimized) const;
+    virtual void SetFullscreenState(bool fullscreen) const;
+    virtual void Restack() const;
 
     static void OnMap(Toplevel* toplevel, void*);
     static void OnUnmap(Toplevel* toplevel, void*);
@@ -106,7 +132,7 @@ class CompositorPrivate final {
     static void OnDestroy(Toplevel* toplevel, void*);
 
     CompositorPrivate* compositor;
-    wlr_xdg_toplevel* handle;
+    wlr_xdg_toplevel* handle = nullptr;
     wlr_scene_tree* scene_tree = nullptr;
     bool mapped = false;
     bool maximized = false;
@@ -116,16 +142,19 @@ class CompositorPrivate final {
     wlr_box restore_box = {};
     wlr_box maximized_box = {};
     wlr_output* maximized_output = nullptr;
-    utils::SignalListener<Toplevel, void> map;
-    utils::SignalListener<Toplevel, void> unmap;
-    utils::SignalListener<Toplevel, void> commit;
-    utils::SignalListener<Toplevel, void> destroy;
-    utils::SignalListener<Toplevel, void> request_move;
+    utils::SignalListener<Toplevel, void> map{this, OnMap};
+    utils::SignalListener<Toplevel, void> unmap{this, OnUnmap};
+    utils::SignalListener<Toplevel, void> commit{this, OnCommit};
+    utils::SignalListener<Toplevel, void> destroy{this, OnDestroy};
+    utils::SignalListener<Toplevel, void> request_move{this, OnRequestMove};
     utils::SignalListener<Toplevel, wlr_xdg_toplevel_resize_event>
-        request_resize;
-    utils::SignalListener<Toplevel, void> request_maximize;
-    utils::SignalListener<Toplevel, void> request_minimize;
-    utils::SignalListener<Toplevel, void> request_fullscreen;
+        request_resize{this, OnRequestResize};
+    utils::SignalListener<Toplevel, void> request_maximize{this,
+                                                           OnRequestMaximize};
+    utils::SignalListener<Toplevel, void> request_minimize{this,
+                                                           OnRequestMinimize};
+    utils::SignalListener<Toplevel, void> request_fullscreen{
+        this, OnRequestFullscreen};
   };
 
   struct Popup {
@@ -203,11 +232,13 @@ class CompositorPrivate final {
   wlr_backend* backend_ = nullptr;
   wlr_renderer* renderer_ = nullptr;
   wlr_allocator* allocator_ = nullptr;
+  wlr_compositor* compositor_ = nullptr;
   wlr_output_layout* output_layout_ = nullptr;
   wlr_scene* scene_ = nullptr;
   wlr_scene_output_layout* scene_layout_ = nullptr;
   wlr_xdg_shell* xdg_shell_ = nullptr;
   wlr_layer_shell_v1* layer_shell_ = nullptr;
+  std::unique_ptr<xwayland::XWayland> xwayland_;
   wlr_seat* seat_ = nullptr;
   wlr_cursor* cursor_ = nullptr;
   wlr_xcursor_manager* cursor_manager_ = nullptr;

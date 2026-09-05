@@ -19,6 +19,7 @@ FlakeWM是一个Wlroots系合成器，当前正在早期开发状态。
 * **LabWC**: https://github.com/labwc/labwc
 * **Wayfire**: https://github.com/wayfirewm/wayfire
 * **Noctalia Umbriel**: https://github.com/noctalia-dev/umbriel
+* **Hyprland 0.42.0**: https://github.com/hyprwm/Hyprland/tree/v0.42.0
 
 ## 许可证
 FlakeWM以GNU GENERAL PUBLIC LICENSE Version 3协议获得许可，详情请移步[COPYING](./COPYING)。

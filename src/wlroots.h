@@ -51,6 +51,7 @@ extern "C" {
 #include <xkbcommon/xkbcommon.h>
 
 #include "src/protocol/layer_shell/wlr_layer_shell.h"
+#include "src/xwayland/wlr_xwayland.h"
 }
 
 #endif  // SRC_WLROOTS_H_
