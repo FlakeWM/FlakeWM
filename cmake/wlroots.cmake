@@ -49,6 +49,7 @@ pkg_check_modules(WLROOTS_REQUIRED_SYSTEM_DEPS REQUIRED
   egl
   gbm>=21.1
   glesv2
+  vulkan>=1.2.182
   lcms2
   libudev
   libseat>=0.2.0
@@ -286,7 +287,7 @@ ExternalProject_Add(wlroots_external
     "-Dexamples=false"
     "-Dwerror=false"
     "-Ddefault_library=static"
-    "-Drenderers=gles2"
+    "-Drenderers=gles2,vulkan"
   BUILD_COMMAND
     "${CMAKE_COMMAND}" -E env
     "PKG_CONFIG_PATH=${_wlroots_pkg_config_path}"
@@ -403,7 +404,7 @@ includedir=\${prefix}/include/wlroots-0.20
 Name: wlroots
 Description: FLAKEWM upstream wlroots build
 Version: ${WLROOTS_VERSION}
-Requires: wayland-server wayland-client libdrm xkbcommon pixman-1 egl gbm glesv2 lcms2 libudev libseat libdisplay-info libinput xcb xcb-composite xcb-dri3 xcb-errors xcb-ewmh xcb-icccm xcb-present xcb-render xcb-renderutil xcb-res xcb-shm xcb-xfixes xcb-xinput
+Requires: wayland-server wayland-client libdrm xkbcommon pixman-1 egl gbm glesv2 vulkan lcms2 libudev libseat libdisplay-info libinput xcb xcb-composite xcb-dri3 xcb-errors xcb-ewmh xcb-icccm xcb-present xcb-render xcb-renderutil xcb-res xcb-shm xcb-xfixes xcb-xinput
 Cflags: -I\${includedir} -I${WLROOTS_BUILD_DIR}/protocol -DWLR_USE_UNSTABLE
 Libs: -L\${libdir} -lwlroots-0.20 -ldl -lm -lrt
 
@@ -411,7 +412,7 @@ wlroots_version=${WLROOTS_VERSION}
 wlroots_version_major=${WLROOTS_VERSION_MAJOR}
 wlroots_version_minor=${WLROOTS_VERSION_MINOR}
 wlroots_version_patch=${WLROOTS_VERSION_PATCH}
-wlroots_features=DRM_BACKEND X11_BACKEND LIBINPUT_BACKEND XWAYLAND GLES2_RENDERER GBM_ALLOCATOR UDMABUF_ALLOCATOR SESSION COLOR_MANAGEMENT
+wlroots_features=DRM_BACKEND X11_BACKEND LIBINPUT_BACKEND XWAYLAND GLES2_RENDERER VULKAN_RENDERER GBM_ALLOCATOR UDMABUF_ALLOCATOR SESSION COLOR_MANAGEMENT
 ")
 
 set(_flakewm_saved_pkg_config_path "$ENV{PKG_CONFIG_PATH}")

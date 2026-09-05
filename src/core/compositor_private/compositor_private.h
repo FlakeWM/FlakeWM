@@ -265,6 +265,7 @@ class CompositorPrivate final {
 
   bool ConfigureBackendEnvironment(
       const utils::StartupArgs& startup_args) const;
+  void UpdateQtFrameInterval();
   bool Spawn(const std::string& command) const;
   bool Fail(const char* message) const;
   void Destroy();
@@ -321,6 +322,7 @@ class CompositorPrivate final {
       request_primary_selection_{this, OnRequestPrimarySelection};
   std::array<wl_event_source*, 2> signal_sources_ = {};
   wl_event_source* qt_frame_timer_ = nullptr;
+  int qt_frame_interval_ms_ = 16;
 
   std::vector<std::unique_ptr<Output>> outputs_;
   std::vector<std::unique_ptr<Keyboard>> keyboards_;

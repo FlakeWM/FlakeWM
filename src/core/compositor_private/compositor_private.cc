@@ -62,6 +62,46 @@ constexpr std::array<uint32_t, 4> kLayerOrder = {
     ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND,
 };
 
+wlr_renderer* CreateRenderer(wlr_backend* backend) {
+  // Keep explicit overrides useful for debugging and driver workarounds.
+  if (std::getenv("WLR_RENDERER") != nullptr) {
+    return wlr_renderer_autocreate(backend);
+  }
+
+  // Vulkan is the normal path; GLES2 keeps unsupported GPUs usable.
+  if (setenv("WLR_RENDERER", "vulkan", 1) == 0) {
+    if (wlr_renderer* renderer = wlr_renderer_autocreate(backend);
+        renderer != nullptr) {
+      unsetenv("WLR_RENDERER");
+      ABSL_LOG(INFO) << "Using Vulkan renderer";
+      return renderer;
+    }
+  }
+
+  ABSL_LOG(WARNING) << "Vulkan renderer unavailable, falling back to GLES2";
+  setenv("WLR_RENDERER", "gles2", 1);
+  wlr_renderer* renderer = wlr_renderer_autocreate(backend);
+  unsetenv("WLR_RENDERER");
+  return renderer;
+}
+
+wlr_output_mode* HighestNativeRefreshMode(wlr_output* output) {
+  // Keep the EDID-preferred resolution and raise only its refresh rate.
+  wlr_output_mode* selected = wlr_output_preferred_mode(output);
+  if (selected == nullptr) {
+    return nullptr;
+  }
+
+  wlr_output_mode* mode = nullptr;
+  wl_list_for_each(mode, &output->modes, link) {
+    if (mode->width == selected->width && mode->height == selected->height &&
+        mode->refresh > selected->refresh) {
+      selected = mode;
+    }
+  }
+  return selected;
+}
+
 const char* ResizeCursorName(uint32_t edges) {
   if ((edges & WLR_EDGE_TOP) && (edges & WLR_EDGE_LEFT)) {
     return "top_left_corner";
@@ -126,7 +166,7 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
   }
 
   // Prepare renderer and allocator for output buffers.
-  renderer_ = wlr_renderer_autocreate(backend_);
+  renderer_ = CreateRenderer(backend_);
   if (renderer_ == nullptr) {
     return Fail("Failed to create Wlroots renderer.");
   }
@@ -291,7 +331,8 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
   }
   qt_frame_timer_ = wl_event_loop_add_timer(event_loop, OnQtFrameTimer, this);
   if (qt_frame_timer_ == nullptr ||
-      wl_event_source_timer_update(qt_frame_timer_, 16) < 0) {
+      wl_event_source_timer_update(qt_frame_timer_, qt_frame_interval_ms_) <
+          0) {
     return Fail("Failed to install QtQuick frame timer");
   }
 
@@ -391,6 +432,7 @@ void CompositorPrivate::Output::OnRequestState(
     ABSL_LOG(ERROR) << "Backend-requested output state was rejected";
   } else {
     output->compositor->ArrangeLayers(output);
+    output->compositor->UpdateQtFrameInterval();
   }
 }
 
@@ -409,6 +451,7 @@ void CompositorPrivate::Output::OnDestroy(Output* output, void*) {
   output->DestroyLayerTrees();
   output->handle = nullptr;
   output->scene_output = nullptr;
+  output->compositor->UpdateQtFrameInterval();
 }
 
 CompositorPrivate::Keyboard::Keyboard(CompositorPrivate* compositor,
@@ -1668,9 +1711,12 @@ void CompositorPrivate::OnNewOutput(CompositorPrivate* compositor,
   wlr_output_state output_state;
   wlr_output_state_init(&output_state);
   wlr_output_state_set_enabled(&output_state, true);
-  if (wlr_output_mode* mode = wlr_output_preferred_mode(output);
+  if (wlr_output_mode* mode = HighestNativeRefreshMode(output);
       mode != nullptr) {
     wlr_output_state_set_mode(&output_state, mode);
+    ABSL_LOG(INFO) << "Selecting " << mode->width << 'x' << mode->height
+                   << " at " << mode->refresh / 1000.0 << " Hz for "
+                   << output->name;
   }
 
   // Now commit state.
@@ -1699,6 +1745,7 @@ void CompositorPrivate::OnNewOutput(CompositorPrivate* compositor,
   ABSL_LOG(INFO) << "New output is now enabled: " << output->name;
   Output* output_wrapper = state.get();
   compositor->outputs_.push_back(std::move(state));
+  compositor->UpdateQtFrameInterval();
   compositor->ArrangeLayers(output_wrapper);
 }
 
@@ -1789,7 +1836,23 @@ int CompositorPrivate::OnQtFrameTimer(void* data) {
   }
   return compositor->qt_frame_timer_ == nullptr
              ? 0
-             : wl_event_source_timer_update(compositor->qt_frame_timer_, 16);
+             : wl_event_source_timer_update(compositor->qt_frame_timer_,
+                                            compositor->qt_frame_interval_ms_);
+}
+
+void CompositorPrivate::UpdateQtFrameInterval() {
+  int32_t highest_refresh = 0;
+  for (const std::unique_ptr<Output>& output : outputs_) {
+    if (output->handle != nullptr && output->handle->enabled) {
+      highest_refresh = std::max(highest_refresh, output->handle->refresh);
+    }
+  }
+
+  qt_frame_interval_ms_ =
+      highest_refresh > 0 ? std::max(1, 1000000 / highest_refresh) : 16;
+  if (qt_frame_timer_ != nullptr) {
+    wl_event_source_timer_update(qt_frame_timer_, qt_frame_interval_ms_);
+  }
 }
 
 bool CompositorPrivate::ConfigureBackendEnvironment(
