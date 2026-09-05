@@ -17,6 +17,7 @@ We refrenced the following projects when developing FlakeWM:
 * **LabWC**: https://github.com/labwc/labwc
 * **Wayfire**: https://github.com/wayfirewm/wayfire
 * **Noctalia Umbriel**: https://github.com/noctalia-dev/umbriel
+* **Hyprland 0.42.0**: https://github.com/hyprwm/Hyprland/tree/v0.42.0
 
 ## License
 FlakeWM is licensed under GNU GENERAL PUBLIC LICENSE Version 3. Please read [COPYING](./COPYING) for more information.
