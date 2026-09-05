@@ -49,6 +49,8 @@ extern "C" {
 #include <wlr/util/box.h>
 #include <wlr/util/edges.h>
 #include <xkbcommon/xkbcommon.h>
+
+#include "src/protocol/layer_shell/wlr_layer_shell.h"
 }
 
 #endif  // SRC_WLROOTS_H_

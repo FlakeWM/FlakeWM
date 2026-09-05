@@ -49,8 +49,15 @@ namespace {
 
 constexpr std::size_t kMaximumClientBufferSize = 1024 * 1024;
 constexpr uint32_t kXdgShellVersion = 5;
+constexpr uint32_t kLayerShellVersion = 4;
 constexpr uint32_t kDoubleClickIntervalMs = 400;
 constexpr double kDoubleClickDistance = 6.0;
+constexpr std::array<uint32_t, 4> kLayerOrder = {
+    ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY,
+    ZWLR_LAYER_SHELL_V1_LAYER_TOP,
+    ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM,
+    ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND,
+};
 
 }  // namespace
 
@@ -142,6 +149,23 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
   if (scene_ == nullptr) {
     return Fail("Failed to create scene graph");
   }
+
+  // Keep regular windows between desktop and shell layers.
+  shell_layer_trees_[ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND] =
+      wlr_scene_tree_create(&scene_->tree);
+  shell_layer_trees_[ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM] =
+      wlr_scene_tree_create(&scene_->tree);
+  toplevel_tree_ = wlr_scene_tree_create(&scene_->tree);
+  shell_layer_trees_[ZWLR_LAYER_SHELL_V1_LAYER_TOP] =
+      wlr_scene_tree_create(&scene_->tree);
+  shell_layer_trees_[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY] =
+      wlr_scene_tree_create(&scene_->tree);
+  if (toplevel_tree_ == nullptr ||
+      std::any_of(shell_layer_trees_.begin(), shell_layer_trees_.end(),
+                  [](wlr_scene_tree* tree) { return tree == nullptr; })) {
+    return Fail("Failed to create scene layers");
+  }
+
   scene_layout_ = wlr_scene_attach_output_layout(scene_, output_layout_);
   if (scene_layout_ == nullptr) {
     return Fail("Failed to attach scene to output layout");
@@ -151,6 +175,10 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
   xdg_shell_ = wlr_xdg_shell_create(display_, kXdgShellVersion);
   if (xdg_shell_ == nullptr) {
     return Fail("Failed to create xdg-shell global");
+  }
+  layer_shell_ = wlr_layer_shell_v1_create(display_, kLayerShellVersion);
+  if (layer_shell_ == nullptr) {
+    return Fail("Failed to create layer-shell global");
   }
   seat_ = wlr_seat_create(display_, "seat0");
   if (seat_ == nullptr) {
@@ -173,6 +201,7 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
   new_output_.Connect(&backend_->events.new_output);
   new_toplevel_.Connect(&xdg_shell_->events.new_toplevel);
   new_popup_.Connect(&xdg_shell_->events.new_popup);
+  new_layer_surface_.Connect(&layer_shell_->events.new_surface);
   new_input_.Connect(&backend_->events.new_input);
   cursor_motion_.Connect(&cursor_->events.motion);
   cursor_motion_absolute_.Connect(&cursor_->events.motion_absolute);
@@ -216,6 +245,10 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
   setenv("XDG_SESSION_DESKTOP", "FlakeWM", 1);
   setenv("XDG_SESSION_TYPE", "wayland", 1);
 
+  // Do not let clients escape to the host X server while XWayland is absent.
+  // A real XWayland display will replace this when support is wired up.
+  unsetenv("DISPLAY");
+
   // Start the user session only when one was requested.
   if (!startup_args.process.empty() && !Spawn(startup_args.process)) {
     return false;
@@ -254,6 +287,34 @@ CompositorPrivate::Output::Output(CompositorPrivate* compositor,
       request_state(this, OnRequestState),
       destroy(this, OnDestroy) {}
 
+bool CompositorPrivate::Output::CreateLayerTrees() {
+  for (uint32_t layer = 0; layer < layer_trees.size(); ++layer) {
+    layer_trees[layer] =
+        wlr_scene_tree_create(compositor->shell_layer_trees_[layer]);
+    if (layer_trees[layer] == nullptr) {
+      DestroyLayerTrees();
+      return false;
+    }
+  }
+  return true;
+}
+
+wlr_scene_tree* CompositorPrivate::Output::LayerTree(uint32_t layer) const {
+  if (layer >= layer_trees.size()) {
+    return layer_trees[ZWLR_LAYER_SHELL_V1_LAYER_TOP];
+  }
+  return layer_trees[layer];
+}
+
+void CompositorPrivate::Output::DestroyLayerTrees() {
+  for (wlr_scene_tree*& tree : layer_trees) {
+    if (tree != nullptr) {
+      wlr_scene_node_destroy(&tree->node);
+      tree = nullptr;
+    }
+  }
+}
+
 void CompositorPrivate::Output::OnFrame(Output* output, void*) {
   // Commit the scene for this output when a new frame is requested.
   if (output->scene_output == nullptr) {
@@ -276,14 +337,24 @@ void CompositorPrivate::Output::OnRequestState(
   if (output->handle != nullptr &&
       !wlr_output_commit_state(output->handle, event->state)) {
     ABSL_LOG(ERROR) << "Backend-requested output state was rejected";
+  } else {
+    output->compositor->ArrangeLayers(output);
   }
 }
 
 void CompositorPrivate::Output::OnDestroy(Output* output, void*) {
   // Disconnect before Wlroots releases the output object.
+  for (const std::unique_ptr<LayerSurface>& layer_surface :
+       output->compositor->layer_surfaces_) {
+    if (layer_surface->handle != nullptr &&
+        layer_surface->handle->output == output->handle) {
+      wlr_layer_surface_v1_destroy(layer_surface->handle);
+    }
+  }
   output->frame.Disconnect();
   output->request_state.Disconnect();
   output->destroy.Disconnect();
+  output->DestroyLayerTrees();
   output->handle = nullptr;
   output->scene_output = nullptr;
 }
@@ -566,6 +637,18 @@ void CompositorPrivate::FocusToplevel(Toplevel* toplevel) {
     return;
   }
 
+  // Exclusive shell layers keep the keyboard until they disappear.
+  for (auto iterator = layer_surfaces_.rbegin();
+       iterator != layer_surfaces_.rend(); ++iterator) {
+    LayerSurface* layer_surface = iterator->get();
+    if (layer_surface->mapped && layer_surface->handle != nullptr &&
+        layer_surface->handle->current.keyboard_interactive ==
+            ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE) {
+      FocusLayerSurface(layer_surface);
+      return;
+    }
+  }
+
   wlr_surface* surface = toplevel->handle->base->surface;
   wlr_surface* previous_surface = seat_->keyboard_state.focused_surface;
   if (previous_surface == surface) {
@@ -592,6 +675,18 @@ void CompositorPrivate::FocusToplevel(Toplevel* toplevel) {
 }
 
 void CompositorPrivate::FocusNextToplevel(Toplevel* excluding) {
+  // Exclusive shell layers have priority over regular windows.
+  for (auto iterator = layer_surfaces_.rbegin();
+       iterator != layer_surfaces_.rend(); ++iterator) {
+    LayerSurface* layer_surface = iterator->get();
+    if (layer_surface->mapped && layer_surface->handle != nullptr &&
+        layer_surface->handle->current.keyboard_interactive ==
+            ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE) {
+      FocusLayerSurface(layer_surface);
+      return;
+    }
+  }
+
   // Pick the topmost mapped window other than the one being removed.
   for (auto iterator = toplevels_.rbegin(); iterator != toplevels_.rend();
        ++iterator) {
@@ -606,6 +701,60 @@ void CompositorPrivate::FocusNextToplevel(Toplevel* excluding) {
   wlr_seat_keyboard_clear_focus(seat_);
 }
 
+void CompositorPrivate::FocusLayerSurface(LayerSurface* layer_surface) {
+  if (layer_surface == nullptr || !layer_surface->mapped ||
+      layer_surface->handle == nullptr ||
+      layer_surface->handle->current.keyboard_interactive ==
+          ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE) {
+    return;
+  }
+
+  wlr_surface* surface = layer_surface->handle->surface;
+  wlr_surface* previous_surface = seat_->keyboard_state.focused_surface;
+  if (previous_surface == surface) {
+    return;
+  }
+  if (previous_surface != nullptr) {
+    wlr_xdg_toplevel* previous =
+        wlr_xdg_toplevel_try_from_wlr_surface(previous_surface);
+    if (previous != nullptr) {
+      wlr_xdg_toplevel_set_activated(previous, false);
+    }
+  }
+
+  if (wlr_keyboard* keyboard = wlr_seat_get_keyboard(seat_);
+      keyboard != nullptr) {
+    wlr_seat_keyboard_notify_enter(seat_, surface, keyboard->keycodes,
+                                   keyboard->num_keycodes,
+                                   &keyboard->modifiers);
+  }
+}
+
+LayerSurface* CompositorPrivate::LayerSurfaceFor(wlr_surface* surface) const {
+  if (surface == nullptr) {
+    return nullptr;
+  }
+
+  wlr_surface* root = wlr_surface_get_root_surface(surface);
+  for (const std::unique_ptr<LayerSurface>& layer_surface : layer_surfaces_) {
+    if (layer_surface->handle != nullptr &&
+        layer_surface->handle->surface == root) {
+      return layer_surface.get();
+    }
+  }
+  return nullptr;
+}
+
+CompositorPrivate::Output* CompositorPrivate::FindOutput(
+    wlr_output* output) const {
+  for (const std::unique_ptr<Output>& state : outputs_) {
+    if (state->handle == output) {
+      return state.get();
+    }
+  }
+  return nullptr;
+}
+
 wlr_box CompositorPrivate::OutputBoxAt(double layout_x, double layout_y) const {
   // Fall back to the center output when the point is outside the layout.
   wlr_output* output =
@@ -616,6 +765,76 @@ wlr_box CompositorPrivate::OutputBoxAt(double layout_x, double layout_y) const {
   wlr_box box = {};
   wlr_output_layout_get_box(output_layout_, output, &box);
   return box;
+}
+
+wlr_box CompositorPrivate::UsableOutputBox(wlr_output* output) const {
+  Output* state = FindOutput(output);
+  if (state != nullptr && state->usable_box.width > 0 &&
+      state->usable_box.height > 0) {
+    return state->usable_box;
+  }
+
+  wlr_box box = {};
+  wlr_output_layout_get_box(output_layout_, output, &box);
+  return box;
+}
+
+void CompositorPrivate::ArrangeLayers(Output* output) {
+  if (output == nullptr || output->handle == nullptr) {
+    return;
+  }
+
+  wlr_box output_box = {};
+  wlr_output_layout_get_box(output_layout_, output->handle, &output_box);
+  wlr_box full_box = {};
+  wlr_output_effective_resolution(output->handle, &full_box.width,
+                                  &full_box.height);
+  if (full_box.width <= 0 || full_box.height <= 0) {
+    return;
+  }
+
+  // Layer coordinates are output-local; their parent trees carry the output
+  // layout offset.
+  for (wlr_scene_tree* tree : output->layer_trees) {
+    wlr_scene_node_set_position(&tree->node, output_box.x, output_box.y);
+  }
+
+  // Exclusive surfaces reserve space before the remaining layers are placed.
+  wlr_box usable_box = full_box;
+  for (const bool exclusive : {true, false}) {
+    for (const uint32_t layer : kLayerOrder) {
+      wlr_scene_tree* tree = output->LayerTree(layer);
+      for (const std::unique_ptr<LayerSurface>& state : layer_surfaces_) {
+        if (state->handle == nullptr || !state->handle->initialized ||
+            state->handle->output != output->handle ||
+            state->handle->current.layer != layer ||
+            state->scene_surface->tree->node.parent != tree ||
+            (state->handle->current.exclusive_zone > 0) != exclusive) {
+          continue;
+        }
+        wlr_scene_layer_surface_v1_configure(state->scene_surface, &full_box,
+                                             &usable_box);
+      }
+    }
+  }
+  output->usable_box = usable_box;
+  output->usable_box.x += output_box.x;
+  output->usable_box.y += output_box.y;
+
+  // Maximized windows follow changes made by panels and other exclusive layers.
+  for (const std::unique_ptr<Toplevel>& toplevel : toplevels_) {
+    if (!toplevel->maximized || toplevel->handle == nullptr ||
+        toplevel->maximized_output != output->handle) {
+      continue;
+    }
+    const wlr_box& geometry = toplevel->handle->base->geometry;
+    toplevel->maximized_box = output->usable_box;
+    wlr_scene_node_set_position(&toplevel->scene_tree->node,
+                                output->usable_box.x - geometry.x,
+                                output->usable_box.y - geometry.y);
+    wlr_xdg_toplevel_set_size(toplevel->handle, output->usable_box.width,
+                              output->usable_box.height);
+  }
 }
 
 void CompositorPrivate::SetMaximized(Toplevel* toplevel, bool maximized) {
@@ -646,8 +865,14 @@ void CompositorPrivate::SetMaximized(Toplevel* toplevel, bool maximized) {
       toplevel->has_restore_box = true;
     }
 
-    // Maximize onto the output under the pointer.
-    toplevel->maximized_box = OutputBoxAt(cursor_->x, cursor_->y);
+    // Maximize onto the usable area of the output under the pointer.
+    toplevel->maximized_output =
+        wlr_output_layout_output_at(output_layout_, cursor_->x, cursor_->y);
+    if (toplevel->maximized_output == nullptr) {
+      toplevel->maximized_output =
+          wlr_output_layout_get_center_output(output_layout_);
+    }
+    toplevel->maximized_box = UsableOutputBox(toplevel->maximized_output);
     if (toplevel->maximized_box.width > 0 &&
         toplevel->maximized_box.height > 0) {
       wlr_scene_node_set_position(&toplevel->scene_tree->node,
@@ -673,6 +898,9 @@ void CompositorPrivate::SetMaximized(Toplevel* toplevel, bool maximized) {
 
   // Send the final state to the client.
   toplevel->maximized = maximized;
+  if (!maximized) {
+    toplevel->maximized_output = nullptr;
+  }
   wlr_xdg_toplevel_set_maximized(toplevel->handle, maximized);
 }
 
@@ -946,7 +1174,11 @@ void CompositorPrivate::OnCursorButton(CompositorPrivate* compositor,
   // Regular presses go to the client before the window takes focus.
   wlr_seat_pointer_notify_button(compositor->seat_, event->time_msec,
                                  event->button, event->state);
-  compositor->FocusToplevel(toplevel);
+  if (toplevel != nullptr) {
+    compositor->FocusToplevel(toplevel);
+  } else {
+    compositor->FocusLayerSurface(compositor->LayerSurfaceFor(surface));
+  }
 }
 
 void CompositorPrivate::OnCursorAxis(CompositorPrivate* compositor,
@@ -1037,9 +1269,15 @@ void CompositorPrivate::OnNewOutput(CompositorPrivate* compositor,
   }
   wlr_scene_output_layout_add_output(compositor->scene_layout_, layout_output,
                                      state->scene_output);
+  if (!state->CreateLayerTrees()) {
+    ABSL_LOG(ERROR) << "Failed to create output layer trees";
+    return;
+  }
 
   ABSL_LOG(INFO) << "New output is now enabled: " << output->name;
+  Output* output_wrapper = state.get();
   compositor->outputs_.push_back(std::move(state));
+  compositor->ArrangeLayers(output_wrapper);
 }
 
 void CompositorPrivate::OnNewToplevel(CompositorPrivate* compositor,
@@ -1047,7 +1285,7 @@ void CompositorPrivate::OnNewToplevel(CompositorPrivate* compositor,
   // Got new XDG toplevel. Let's start handling by creating its own scene tree.
   auto toplevel = std::make_unique<Toplevel>(compositor, handle);
   toplevel->scene_tree =
-      wlr_scene_xdg_surface_create(&compositor->scene_->tree, handle->base);
+      wlr_scene_xdg_surface_create(compositor->toplevel_tree_, handle->base);
   if (toplevel->scene_tree == nullptr) {
     ABSL_LOG(ERROR) << "Failed to create scene tree for XDG_TOPLEVEL";
     return;
@@ -1071,6 +1309,9 @@ void CompositorPrivate::OnNewToplevel(CompositorPrivate* compositor,
 void CompositorPrivate::OnNewPopup(CompositorPrivate* compositor,
                                    wlr_xdg_popup* handle) {
   // Got new XDG popup. Let's start handling by finding its parent.
+  if (handle->parent == nullptr) {
+    return;
+  }
   auto popup = std::make_unique<Popup>(compositor, handle);
   wlr_xdg_surface* parent =
       wlr_xdg_surface_try_from_wlr_surface(handle->parent);
@@ -1182,6 +1423,7 @@ void CompositorPrivate::Destroy() {
   }
 
   // Disconnect all signal listeners
+  new_layer_surface_.Disconnect();
   new_popup_.Disconnect();
   new_toplevel_.Disconnect();
   new_output_.Disconnect();
@@ -1204,6 +1446,7 @@ void CompositorPrivate::Destroy() {
   // Post-cleanups for cursors and surfaces.
   ResetCursorMode();
   popups_.clear();
+  layer_surfaces_.clear();
   toplevels_.clear();
   keyboards_.clear();
   outputs_.clear();
@@ -1213,6 +1456,8 @@ void CompositorPrivate::Destroy() {
     wlr_scene_node_destroy(&scene_->tree.node);
     scene_ = nullptr;
     scene_layout_ = nullptr;
+    shell_layer_trees_.fill(nullptr);
+    toplevel_tree_ = nullptr;
   }
 
   // Clear cursor manager.
@@ -1249,6 +1494,8 @@ void CompositorPrivate::Destroy() {
   if (display_ != nullptr) {
     wl_display_destroy(display_);
     display_ = nullptr;
+    layer_shell_ = nullptr;
+    xdg_shell_ = nullptr;
   }
 }
 

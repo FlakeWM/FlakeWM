@@ -28,6 +28,7 @@
 #include <string>
 #include <vector>
 
+#include "src/protocol/layer_shell/layer_surface.h"
 #include "src/utils/args_handler/args_handler.h"
 #include "src/utils/signal_listener.h"
 #include "src/wlroots.h"
@@ -36,6 +37,8 @@ namespace flakewm {
 namespace core {
 
 class CompositorPrivate final {
+  friend class LayerSurface;
+
  public:
   CompositorPrivate();
   ~CompositorPrivate();
@@ -53,6 +56,10 @@ class CompositorPrivate final {
   struct Output {
     Output(CompositorPrivate* compositor, wlr_output* output);
 
+    bool CreateLayerTrees();
+    wlr_scene_tree* LayerTree(uint32_t layer) const;
+    void DestroyLayerTrees();
+
     static void OnFrame(Output* output, void*);
     static void OnRequestState(Output* output,
                                wlr_output_event_request_state* event);
@@ -61,6 +68,8 @@ class CompositorPrivate final {
     CompositorPrivate* compositor;
     wlr_output* handle;
     wlr_scene_output* scene_output = nullptr;
+    wlr_box usable_box = {};
+    std::array<wlr_scene_tree*, 4> layer_trees = {};
     utils::SignalListener<Output, void> frame;
     utils::SignalListener<Output, wlr_output_event_request_state> request_state;
     utils::SignalListener<Output, void> destroy;
@@ -106,6 +115,7 @@ class CompositorPrivate final {
     bool restore_position_pending = false;
     wlr_box restore_box = {};
     wlr_box maximized_box = {};
+    wlr_output* maximized_output = nullptr;
     utils::SignalListener<Toplevel, void> map;
     utils::SignalListener<Toplevel, void> unmap;
     utils::SignalListener<Toplevel, void> commit;
@@ -139,7 +149,12 @@ class CompositorPrivate final {
                        double* surface_x, double* surface_y) const;
   void FocusToplevel(Toplevel* toplevel);
   void FocusNextToplevel(Toplevel* excluding);
+  void FocusLayerSurface(LayerSurface* layer_surface);
+  LayerSurface* LayerSurfaceFor(wlr_surface* surface) const;
+  Output* FindOutput(wlr_output* output) const;
   wlr_box OutputBoxAt(double layout_x, double layout_y) const;
+  wlr_box UsableOutputBox(wlr_output* output) const;
+  void ArrangeLayers(Output* output);
   void SetMaximized(Toplevel* toplevel, bool maximized);
   void ToggleMaximized(Toplevel* toplevel);
   void Minimize(Toplevel* toplevel);
@@ -174,6 +189,8 @@ class CompositorPrivate final {
   static void OnNewToplevel(CompositorPrivate* compositor,
                             wlr_xdg_toplevel* handle);
   static void OnNewPopup(CompositorPrivate* compositor, wlr_xdg_popup* handle);
+  static void OnNewLayerSurface(CompositorPrivate* compositor,
+                                wlr_layer_surface_v1* handle);
   static int OnTerminateSignal(int signal, void* data);
 
   bool ConfigureBackendEnvironment(
@@ -190,9 +207,12 @@ class CompositorPrivate final {
   wlr_scene* scene_ = nullptr;
   wlr_scene_output_layout* scene_layout_ = nullptr;
   wlr_xdg_shell* xdg_shell_ = nullptr;
+  wlr_layer_shell_v1* layer_shell_ = nullptr;
   wlr_seat* seat_ = nullptr;
   wlr_cursor* cursor_ = nullptr;
   wlr_xcursor_manager* cursor_manager_ = nullptr;
+  std::array<wlr_scene_tree*, 4> shell_layer_trees_ = {};
+  wlr_scene_tree* toplevel_tree_ = nullptr;
 
   utils::SignalListener<CompositorPrivate, wlr_output> new_output_{this,
                                                                    OnNewOutput};
@@ -200,6 +220,8 @@ class CompositorPrivate final {
       this, OnNewToplevel};
   utils::SignalListener<CompositorPrivate, wlr_xdg_popup> new_popup_{
       this, OnNewPopup};
+  utils::SignalListener<CompositorPrivate, wlr_layer_surface_v1>
+      new_layer_surface_{this, OnNewLayerSurface};
   utils::SignalListener<CompositorPrivate, wlr_input_device> new_input_{
       this, OnNewInput};
   utils::SignalListener<CompositorPrivate, wlr_pointer_motion_event>
@@ -227,6 +249,7 @@ class CompositorPrivate final {
   std::vector<std::unique_ptr<Output>> outputs_;
   std::vector<std::unique_ptr<Keyboard>> keyboards_;
   std::vector<std::unique_ptr<Toplevel>> toplevels_;
+  std::vector<std::unique_ptr<LayerSurface>> layer_surfaces_;
   std::vector<std::unique_ptr<Popup>> popups_;
   CursorMode cursor_mode_ = CursorMode::kPassthrough;
   Toplevel* grabbed_toplevel_ = nullptr;

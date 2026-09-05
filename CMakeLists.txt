@@ -48,6 +48,7 @@ set(flakewm_CXX_SOURCES
   src/main.cc
   src/core/compositor/compositor.cc
   src/core/compositor_private/compositor_private.cc
+  src/protocol/layer_shell/layer_surface.cc
   src/utils/args_handler/args_handler.cc
   src/utils/log/log.cc
   src/utils/misc/misc.cc
@@ -58,6 +59,8 @@ add_executable(flakewm
   src/wlroots.h
   src/core/compositor/compositor.h
   src/core/compositor_private/compositor_private.h
+  src/protocol/layer_shell/layer_surface.h
+  src/protocol/layer_shell/wlr_layer_shell.h
   src/utils/args_handler/args_handler.h
   src/utils/log/log.h
   src/utils/misc/misc.h
