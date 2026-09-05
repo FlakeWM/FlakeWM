@@ -29,6 +29,7 @@
 #include <vector>
 
 #include "src/backend/backend/backend.h"
+#include "src/protocol/input_method/input_method_relay/input_method_relay.h"
 #include "src/protocol/layer_shell/layer_surface.h"
 #include "src/utils/args_handler/args_handler.h"
 #include "src/utils/signal_listener.h"
@@ -210,6 +211,8 @@ class CompositorPrivate final {
   void AddKeyboard(wlr_input_device* device);
   static void OnNewInput(CompositorPrivate* compositor,
                          wlr_input_device* device);
+  static void OnNewVirtualKeyboard(CompositorPrivate* compositor,
+                                   wlr_virtual_keyboard_v1* keyboard);
   Toplevel* ToplevelAt(double layout_x, double layout_y, wlr_surface** surface,
                        double* surface_x, double* surface_y) const;
   Toplevel* FindToplevel(wlr_xdg_toplevel* handle) const;
@@ -283,6 +286,8 @@ class CompositorPrivate final {
   wlr_xdg_shell* xdg_shell_ = nullptr;
   wlr_xdg_decoration_manager_v1* xdg_decoration_manager_ = nullptr;
   wlr_layer_shell_v1* layer_shell_ = nullptr;
+  wlr_virtual_keyboard_manager_v1* virtual_keyboard_manager_ = nullptr;
+  std::unique_ptr<protocol::InputMethodRelay> input_method_relay_;
   std::unique_ptr<xwayland::XWaylandManager> xwayland_;
   wlr_seat* seat_ = nullptr;
   wlr_cursor* cursor_ = nullptr;
@@ -302,6 +307,8 @@ class CompositorPrivate final {
       new_layer_surface_{this, OnNewLayerSurface};
   utils::SignalListener<CompositorPrivate, wlr_input_device> new_input_{
       this, OnNewInput};
+  utils::SignalListener<CompositorPrivate, wlr_virtual_keyboard_v1>
+      new_virtual_keyboard_{this, OnNewVirtualKeyboard};
   utils::SignalListener<CompositorPrivate, wlr_pointer_motion_event>
       cursor_motion_{this, OnCursorMotion};
   utils::SignalListener<CompositorPrivate, wlr_pointer_motion_absolute_event>

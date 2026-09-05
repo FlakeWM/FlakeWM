@@ -266,6 +266,16 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
   if (seat_ == nullptr) {
     return Fail("Failed to create Wayland seat");
   }
+  virtual_keyboard_manager_ = wlr_virtual_keyboard_manager_v1_create(display_);
+  if (virtual_keyboard_manager_ == nullptr) {
+    return Fail("Failed to create virtual-keyboard manager");
+  }
+  input_method_relay_ = std::make_unique<protocol::InputMethodRelay>(
+      display_, seat_, scene_,
+      shell_layer_trees_[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY], output_layout_);
+  if (!input_method_relay_->IsValid()) {
+    return Fail("Failed to create text-input and input-method globals");
+  }
 
   // Create one logical cursor for all pointer devices.
   cursor_ = wlr_cursor_create();
@@ -287,6 +297,8 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
       &xdg_decoration_manager_->events.new_toplevel_decoration);
   new_layer_surface_.Connect(&layer_shell_->events.new_surface);
   new_input_.Connect(&backend_->events.new_input);
+  new_virtual_keyboard_.Connect(
+      &virtual_keyboard_manager_->events.new_virtual_keyboard);
   cursor_motion_.Connect(&cursor_->events.motion);
   cursor_motion_absolute_.Connect(&cursor_->events.motion_absolute);
   cursor_button_.Connect(&cursor_->events.button);
@@ -478,6 +490,17 @@ void CompositorPrivate::Keyboard::OnModifiers(Keyboard* keyboard, void*) {
   if (keyboard->handle == nullptr) {
     return;
   }
+  if (keyboard->compositor->input_method_relay_ != nullptr) {
+    wlr_input_method_keyboard_grab_v2* grab =
+        keyboard->compositor->input_method_relay_->GrabForKeyboard(
+            keyboard->handle);
+    if (grab != nullptr) {
+      wlr_input_method_keyboard_grab_v2_set_keyboard(grab, keyboard->handle);
+      wlr_input_method_keyboard_grab_v2_send_modifiers(
+          grab, &keyboard->handle->modifiers);
+      return;
+    }
+  }
   wlr_seat_set_keyboard(keyboard->compositor->seat_, keyboard->handle);
   wlr_seat_keyboard_notify_modifiers(keyboard->compositor->seat_,
                                      &keyboard->handle->modifiers);
@@ -488,6 +511,17 @@ void CompositorPrivate::Keyboard::OnKey(Keyboard* keyboard,
   // Forward key events from this keyboard to the focused client.
   if (keyboard->handle == nullptr) {
     return;
+  }
+  if (keyboard->compositor->input_method_relay_ != nullptr) {
+    wlr_input_method_keyboard_grab_v2* grab =
+        keyboard->compositor->input_method_relay_->GrabForKeyboard(
+            keyboard->handle);
+    if (grab != nullptr) {
+      wlr_input_method_keyboard_grab_v2_set_keyboard(grab, keyboard->handle);
+      wlr_input_method_keyboard_grab_v2_send_key(grab, event->time_msec,
+                                                 event->keycode, event->state);
+      return;
+    }
   }
   wlr_seat_set_keyboard(keyboard->compositor->seat_, keyboard->handle);
   wlr_seat_keyboard_notify_key(keyboard->compositor->seat_, event->time_msec,
@@ -898,6 +932,15 @@ void CompositorPrivate::AddKeyboard(wlr_input_device* device) {
   keyboard->destroy.Connect(&device->events.destroy);
   wlr_seat_set_keyboard(seat_, handle);
   keyboards_.push_back(std::move(keyboard));
+  UpdateSeatCapabilities();
+
+  if (wlr_surface* surface = seat_->keyboard_state.focused_surface;
+      surface != nullptr) {
+    wlr_seat_keyboard_notify_enter(seat_, surface, handle->keycodes,
+                                   handle->num_keycodes, &handle->modifiers);
+  } else {
+    FocusNextToplevel(nullptr);
+  }
 }
 
 void CompositorPrivate::OnNewInput(CompositorPrivate* compositor,
@@ -906,7 +949,7 @@ void CompositorPrivate::OnNewInput(CompositorPrivate* compositor,
   switch (device->type) {
     case WLR_INPUT_DEVICE_KEYBOARD:
       compositor->AddKeyboard(device);
-      break;
+      return;
     case WLR_INPUT_DEVICE_POINTER:
       wlr_cursor_attach_input_device(compositor->cursor_, device);
       break;
@@ -915,6 +958,14 @@ void CompositorPrivate::OnNewInput(CompositorPrivate* compositor,
       break;
   }
   compositor->UpdateSeatCapabilities();
+}
+
+void CompositorPrivate::OnNewVirtualKeyboard(
+    CompositorPrivate* compositor, wlr_virtual_keyboard_v1* keyboard) {
+  if (keyboard->seat != compositor->seat_) {
+    return;
+  }
+  compositor->AddKeyboard(&keyboard->keyboard.base);
 }
 
 CompositorPrivate::Toplevel* CompositorPrivate::ToplevelAt(
@@ -1952,6 +2003,7 @@ void CompositorPrivate::Destroy() {
   new_popup_.Disconnect();
   new_toplevel_.Disconnect();
   new_output_.Disconnect();
+  new_virtual_keyboard_.Disconnect();
   new_input_.Disconnect();
   request_primary_selection_.Disconnect();
   request_selection_.Disconnect();
@@ -1984,6 +2036,7 @@ void CompositorPrivate::Destroy() {
   if (display_ != nullptr) {
     wl_display_destroy_clients(display_);
   }
+  input_method_relay_.reset();
 
   // Clear scene nodes.
   if (scene_ != nullptr) {
@@ -2028,6 +2081,7 @@ void CompositorPrivate::Destroy() {
     display_ = nullptr;
     compositor_ = nullptr;
     layer_shell_ = nullptr;
+    virtual_keyboard_manager_ = nullptr;
     xdg_shell_ = nullptr;
     xdg_decoration_manager_ = nullptr;
   }

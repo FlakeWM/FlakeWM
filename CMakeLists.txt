@@ -46,6 +46,35 @@ include(cmake/wlroots.cmake)
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Qml Quick)
 find_program(XWAYLAND_EXECUTABLE NAMES Xwayland REQUIRED)
+find_program(WAYLAND_SCANNER_EXECUTABLE NAMES wayland-scanner REQUIRED)
+pkg_get_variable(WAYLAND_PROTOCOLS_DATA_DIR wayland-protocols pkgdatadir)
+
+set(FLAKEWM_PROTOCOL_DIR "${CMAKE_CURRENT_BINARY_DIR}/protocol")
+file(MAKE_DIRECTORY "${FLAKEWM_PROTOCOL_DIR}")
+
+function(flakewm_generate_server_protocol target xml basename)
+  set(header "${FLAKEWM_PROTOCOL_DIR}/${basename}-protocol.h")
+  set(code "${FLAKEWM_PROTOCOL_DIR}/${basename}-protocol.c")
+  add_custom_command(
+    OUTPUT "${header}" "${code}"
+    COMMAND "${WAYLAND_SCANNER_EXECUTABLE}" server-header "${xml}" "${header}"
+    COMMAND "${WAYLAND_SCANNER_EXECUTABLE}" private-code "${xml}" "${code}"
+    DEPENDS "${xml}"
+    VERBATIM
+  )
+  set(${target} "${header}" "${code}" PARENT_SCOPE)
+endfunction()
+
+flakewm_generate_server_protocol(
+  FLAKEWM_TEXT_INPUT_V1_PROTOCOL
+  "${WAYLAND_PROTOCOLS_DATA_DIR}/unstable/text-input/text-input-unstable-v1.xml"
+  text-input-unstable-v1
+)
+flakewm_generate_server_protocol(
+  FLAKEWM_TEXT_INPUT_V2_PROTOCOL
+  "${CMAKE_CURRENT_SOURCE_DIR}/libs/waylib/src/server/protocols/private/text-input-unstable-v2.xml"
+  text-input-unstable-v2
+)
 
 add_executable(flakewm-xwayland
   src/xwayland/server/server.cc
@@ -62,7 +91,15 @@ set(flakewm_CXX_SOURCES
   src/backend/fbdev/fbdev_output/fbdev_output.cc
   src/core/compositor/compositor.cc
   src/core/compositor_private/compositor_private.cc
+  src/protocol/input_method/input_method_popup/input_method_popup.cc
+  src/protocol/input_method/input_method_relay/input_method_relay.cc
   src/protocol/layer_shell/layer_surface.cc
+  src/protocol/text_input/text_input/text_input.cc
+  src/protocol/text_input/text_input_v1/text_input_v1.cc
+  src/protocol/text_input/text_input_v1_manager/text_input_v1_manager.cc
+  src/protocol/text_input/text_input_v2/text_input_v2.cc
+  src/protocol/text_input/text_input_v2_manager/text_input_v2_manager.cc
+  src/protocol/text_input/text_input_v3/text_input_v3.cc
   src/view/ssd/ssd/ssd.cc
   src/view/ssd/ssd_buffer/ssd_buffer.cc
   src/view/ssd/ssd_renderer/ssd_renderer.cc
@@ -78,9 +115,12 @@ set(flakewm_CXX_SOURCES
 
 add_executable(flakewm
   ${flakewm_CXX_SOURCES}
+  ${FLAKEWM_TEXT_INPUT_V1_PROTOCOL}
+  ${FLAKEWM_TEXT_INPUT_V2_PROTOCOL}
   src/wlr_wrapper/wlroots.h
   src/wlr_wrapper/color.h
   src/wlr_wrapper/scene.h
+  src/wlr_wrapper/wlr_input_method.h
   src/wlr_wrapper/wlr_layer_shell.h
   src/wlr_wrapper/wlr_xwayland.h
   src/backend/backend/backend.h
@@ -88,7 +128,15 @@ add_executable(flakewm
   src/backend/fbdev/fbdev_output/fbdev_output.h
   src/core/compositor/compositor.h
   src/core/compositor_private/compositor_private.h
+  src/protocol/input_method/input_method_popup/input_method_popup.h
+  src/protocol/input_method/input_method_relay/input_method_relay.h
   src/protocol/layer_shell/layer_surface.h
+  src/protocol/text_input/text_input/text_input.h
+  src/protocol/text_input/text_input_v1/text_input_v1.h
+  src/protocol/text_input/text_input_v1_manager/text_input_v1_manager.h
+  src/protocol/text_input/text_input_v2/text_input_v2.h
+  src/protocol/text_input/text_input_v2_manager/text_input_v2_manager.h
+  src/protocol/text_input/text_input_v3/text_input_v3.h
   src/view/ssd/ssd/ssd.h
   src/view/ssd/ssd_buffer/ssd_buffer.h
   src/view/ssd/ssd_renderer/ssd_renderer.h
@@ -133,7 +181,7 @@ target_link_libraries(flakewm
     absl::log_initialize
 )
 
-target_include_directories(flakewm PRIVATE ./)
+target_include_directories(flakewm PRIVATE ./ "${CMAKE_CURRENT_BINARY_DIR}")
 
 target_compile_definitions(flakewm PRIVATE
   FLAKEWM_VERSION="${PROJECT_VERSION}"
