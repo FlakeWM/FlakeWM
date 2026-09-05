@@ -13,6 +13,8 @@ FlakeWM是一个Wlroots系合成器，当前正在早期开发状态。
 
 不过要知道这不是什么好主意就是了。
 
+本合成器采用Qt Quick离屏渲染标题栏，请自备Qt6.8。
+
 ## 致谢
 本项目参考了以下项目：
 * **GXDE Wayland Compositor**: https://github.com/GXDE-OS/gxde-wlcom

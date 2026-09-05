@@ -11,6 +11,8 @@ FlakeWM is a Wlroots based Wayland compositor. Currently, it's under early devel
 ### Other Dependencies
 I realized that the version(s) of `libdrm`, `pixman` and `wayland` required by Wlroots 0.20.2 may be too high for some distros, and we have also vendored those libraries. When the system packages cannot satisify the version requirement, CMake will fall back to vendored library. But keep in mind, **THIS IS NOT A GOOD PRACTICE**.
 
+This window compositor relys on Qt Quick offscreen to render titlebars, please have Qt 6.8 ready.
+
 ## Acknowledgement
 We refrenced the following projects when developing FlakeWM:
 * **GXDE Wayland Compositor**: https://github.com/GXDE-OS/gxde-wlcom
