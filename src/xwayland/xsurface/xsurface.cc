@@ -25,7 +25,7 @@
 #include <cstdint>
 #include <limits>
 
-#include "src/xwayland/xsurface.h"
+#include "src/xwayland/xsurface/xsurface.h"
 
 namespace flakewm {
 namespace xwayland {

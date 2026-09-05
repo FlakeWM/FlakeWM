@@ -23,7 +23,7 @@
 #define SRC_PROTOCOL_LAYER_SHELL_LAYER_SURFACE_H_
 
 #include "src/utils/signal_listener.h"
-#include "src/wlroots.h"
+#include "src/wlr_wrapper/wlroots.h"
 
 namespace flakewm {
 namespace core {

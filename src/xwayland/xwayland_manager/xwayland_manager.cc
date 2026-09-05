@@ -19,8 +19,6 @@
  * XWayland server lifecycle.
  */
 
-#include "src/xwayland/xwayland.h"
-
 #include <absl/log/absl_log.h>
 #include <unistd.h>
 
@@ -32,7 +30,8 @@
 #include <utility>
 
 #include "src/core/compositor_private/compositor_private.h"
-#include "src/xwayland/xsurface.h"
+#include "src/xwayland/xwayland_manager/xwayland_manager.h"
+#include "src/xwayland/xsurface/xsurface.h"
 
 namespace flakewm {
 namespace xwayland {
@@ -57,14 +56,15 @@ std::string LauncherPath() {
 
 }  // namespace
 
-XWayland::XWayland(core::CompositorPrivate* compositor)
+XWaylandManager::XWaylandManager(core::CompositorPrivate* compositor)
     : compositor(compositor) {}
 
-XWayland::~XWayland() {
+XWaylandManager::~XWaylandManager() {
   Stop();
 }
 
-bool XWayland::Start(wl_display* display, wlr_compositor* wlr_compositor) {
+bool XWaylandManager::Start(wl_display* display,
+                            wlr_compositor* wlr_compositor) {
   if (handle != nullptr || display == nullptr || wlr_compositor == nullptr) {
     return false;
   }
@@ -94,7 +94,7 @@ bool XWayland::Start(wl_display* display, wlr_compositor* wlr_compositor) {
   return true;
 }
 
-void XWayland::Stop() {
+void XWaylandManager::Stop() {
   new_surface.Disconnect();
   ready.Disconnect();
   if (handle == nullptr) {
@@ -106,32 +106,33 @@ void XWayland::Stop() {
   handle = nullptr;
 }
 
-const char* XWayland::DisplayName() const {
+const char* XWaylandManager::DisplayName() const {
   return handle == nullptr ? "" : handle->display_name;
 }
 
-void XWayland::OnReady(XWayland* xwayland, void*) {
-  if (xwayland->handle == nullptr) {
+void XWaylandManager::OnReady(XWaylandManager* manager, void*) {
+  if (manager->handle == nullptr) {
     return;
   }
 
   // The XWM exists only after ready, handle seat here instead of onstart.
-  wlr_xwayland_set_seat(xwayland->handle, xwayland->compositor->seat_);
+  wlr_xwayland_set_seat(manager->handle, manager->compositor->seat_);
   wlr_xcursor* cursor = wlr_xcursor_manager_get_xcursor(
-      xwayland->compositor->cursor_manager_, "default", 1.0F);
+      manager->compositor->cursor_manager_, "default", 1.0F);
   if (cursor != nullptr && cursor->image_count > 0) {
     wlr_xcursor_image* image = cursor->images[0];
-    wlr_xwayland_set_cursor(xwayland->handle,
+    wlr_xwayland_set_cursor(manager->handle,
                             wlr_xcursor_image_get_buffer(image),
                             image->hotspot_x, image->hotspot_y);
   }
   ABSL_LOG(INFO) << "XWayland server is ready on DISPLAY="
-                 << xwayland->DisplayName() << '.';
+                 << manager->DisplayName() << '.';
 }
 
-void XWayland::OnNewSurface(XWayland* xwayland, wlr_xwayland_surface* surface) {
-  auto state = std::make_unique<XSurface>(xwayland->compositor, surface);
-  xwayland->compositor->toplevels_.push_back(std::move(state));
+void XWaylandManager::OnNewSurface(XWaylandManager* manager,
+                                   wlr_xwayland_surface* surface) {
+  auto state = std::make_unique<XSurface>(manager->compositor, surface);
+  manager->compositor->toplevels_.push_back(std::move(state));
   ABSL_LOG(INFO) << "Got new XWayland window: " << surface->window_id << '.';
 }
 

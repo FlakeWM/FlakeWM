@@ -19,40 +19,41 @@
  * XWayland server lifecycle management.
  */
 
-#ifndef SRC_XWAYLAND_XWAYLAND_H_
-#define SRC_XWAYLAND_XWAYLAND_H_
+#ifndef SRC_XWAYLAND_XWAYLAND_MANAGER_XWAYLAND_MANAGER_H_
+#define SRC_XWAYLAND_XWAYLAND_MANAGER_XWAYLAND_MANAGER_H_
 
 #include "src/core/compositor_private/compositor_private.h"
 #include "src/utils/signal_listener.h"
-#include "src/wlroots.h"
+#include "src/wlr_wrapper/wlroots.h"
 
 namespace flakewm {
 namespace xwayland {
 
-class XWayland final {
+class XWaylandManager final {
  public:
-  explicit XWayland(core::CompositorPrivate* compositor);
-  ~XWayland();
+  explicit XWaylandManager(core::CompositorPrivate* compositor);
+  ~XWaylandManager();
 
-  XWayland(const XWayland&) = delete;
-  XWayland& operator=(const XWayland&) = delete;
+  XWaylandManager(const XWaylandManager&) = delete;
+  XWaylandManager& operator=(const XWaylandManager&) = delete;
 
   bool Start(wl_display* display, wlr_compositor* compositor);
   void Stop();
   const char* DisplayName() const;
 
  private:
-  static void OnReady(XWayland* xwayland, void*);
-  static void OnNewSurface(XWayland* xwayland, wlr_xwayland_surface* surface);
+  static void OnReady(XWaylandManager* manager, void*);
+  static void OnNewSurface(XWaylandManager* manager,
+                           wlr_xwayland_surface* surface);
 
   core::CompositorPrivate* compositor;
   wlr_xwayland* handle = nullptr;
-  utils::SignalListener<XWayland, void> ready{this, OnReady};
-  utils::SignalListener<XWayland, wlr_xwayland_surface> new_surface{
+  utils::SignalListener<XWaylandManager, void> ready{this, OnReady};
+  utils::SignalListener<XWaylandManager, wlr_xwayland_surface> new_surface{
       this, OnNewSurface};
 };
 
 }  // namespace xwayland
 }  // namespace flakewm
 
-#endif  // SRC_XWAYLAND_XWAYLAND_H_
+#endif  // SRC_XWAYLAND_XWAYLAND_MANAGER_XWAYLAND_MANAGER_H_

@@ -31,13 +31,13 @@
 #include "src/protocol/layer_shell/layer_surface.h"
 #include "src/utils/args_handler/args_handler.h"
 #include "src/utils/signal_listener.h"
-#include "src/wlroots.h"
+#include "src/wlr_wrapper/wlroots.h"
 
 namespace flakewm {
 namespace xwayland {
 
 class XSurface;
-class XWayland;
+class XWaylandManager;
 
 }  // namespace xwayland
 
@@ -46,7 +46,7 @@ namespace core {
 class CompositorPrivate final {
   friend class LayerSurface;
   friend class xwayland::XSurface;
-  friend class xwayland::XWayland;
+  friend class xwayland::XWaylandManager;
 
  public:
   CompositorPrivate();
@@ -238,7 +238,7 @@ class CompositorPrivate final {
   wlr_scene_output_layout* scene_layout_ = nullptr;
   wlr_xdg_shell* xdg_shell_ = nullptr;
   wlr_layer_shell_v1* layer_shell_ = nullptr;
-  std::unique_ptr<xwayland::XWayland> xwayland_;
+  std::unique_ptr<xwayland::XWaylandManager> xwayland_;
   wlr_seat* seat_ = nullptr;
   wlr_cursor* cursor_ = nullptr;
   wlr_xcursor_manager* cursor_manager_ = nullptr;

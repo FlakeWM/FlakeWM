@@ -19,8 +19,13 @@
  * Wlroots and Wayland headers used by the compositor core.
  */
 
-#ifndef SRC_WLROOTS_H_
-#define SRC_WLROOTS_H_
+#ifndef SRC_WLR_WRAPPER_WLROOTS_H_
+#define SRC_WLR_WRAPPER_WLROOTS_H_
+
+// Compatibility headers must be included before their wlroots users.
+// NOLINTBEGIN(build/include_order)
+#include "src/wlr_wrapper/color.h"
+#include "src/wlr_wrapper/scene.h"
 
 extern "C" {
 #include <wayland-server-core.h>
@@ -39,7 +44,6 @@ extern "C" {
 #include <wlr/types/wlr_presentation_time.h>
 #include <wlr/types/wlr_primary_selection.h>
 #include <wlr/types/wlr_primary_selection_v1.h>
-#include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_subcompositor.h>
 #include <wlr/types/wlr_viewporter.h>
@@ -50,8 +54,9 @@ extern "C" {
 #include <wlr/util/edges.h>
 #include <xkbcommon/xkbcommon.h>
 
-#include "src/protocol/layer_shell/wlr_layer_shell.h"
-#include "src/xwayland/wlr_xwayland.h"
+#include "src/wlr_wrapper/wlr_layer_shell.h"
+#include "src/wlr_wrapper/wlr_xwayland.h"
 }
+// NOLINTEND
 
-#endif  // SRC_WLROOTS_H_
+#endif  // SRC_WLR_WRAPPER_WLROOTS_H_

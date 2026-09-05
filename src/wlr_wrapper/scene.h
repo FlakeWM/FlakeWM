@@ -16,15 +16,31 @@
  * You should have received a copy of the GNU General Public License along with
  * FLAKEWM. If not, see <https://www.gnu.org/licenses/>.
  * ----------------------------------------------------------------------------
- * C++ compatibility for the layer shell protocol header.
+ * Wlroots scene wrapper.
  */
 
-#ifndef SRC_PROTOCOL_LAYER_SHELL_WLR_LAYER_SHELL_H_
-#define SRC_PROTOCOL_LAYER_SHELL_WLR_LAYER_SHELL_H_
+#ifndef SRC_WLR_WRAPPER_SCENE_H_
+#define SRC_WLR_WRAPPER_SCENE_H_
 
-// The protocol calls this field "namespace", which is reserved by C++.
-#define namespace namespace_
-#include <wlr/types/wlr_layer_shell_v1.h>
-#undef namespace
+// color.h must be parsed before wlr_renderer.h includes it.
+// NOLINTBEGIN(build/include_order)
+#include "src/wlr_wrapper/color.h"
 
-#endif  // SRC_PROTOCOL_LAYER_SHELL_WLR_LAYER_SHELL_H_
+extern "C" {
+#include <pixman.h>
+#include <time.h>
+#include <wayland-server-core.h>
+#include <wlr/render/wlr_renderer.h>
+#include <wlr/types/wlr_damage_ring.h>
+#include <wlr/types/wlr_linux_dmabuf_v1.h>
+#include <wlr/util/addon.h>
+#include <wlr/util/box.h>
+
+// C permits static array bounds in parameters; C++ does not.
+#define static
+#include <wlr/types/wlr_scene.h>
+#undef static
+}
+// NOLINTEND
+
+#endif  // SRC_WLR_WRAPPER_SCENE_H_

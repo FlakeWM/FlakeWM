@@ -9,12 +9,6 @@
 #ifndef WLR_TYPES_WLR_SCENE_H
 #define WLR_TYPES_WLR_SCENE_H
 
-#ifdef __cplusplus
-#define WLR_SCENE_ARRAY_PARAM_SIZE(size) size
-#else
-#define WLR_SCENE_ARRAY_PARAM_SIZE(size) static size
-#endif
-
 /**
  * The scene-graph API provides a declarative way to display surfaces. The
  * compositor creates a scene, adds surfaces, then renders the scene on
@@ -461,8 +455,7 @@ void wlr_scene_surface_send_frame_done(struct wlr_scene_surface *scene_surface,
  * The color argument must be a premultiplied color value.
  */
 struct wlr_scene_rect *wlr_scene_rect_create(struct wlr_scene_tree *parent,
-		int width, int height,
-		const float color[WLR_SCENE_ARRAY_PARAM_SIZE(4)]);
+		int width, int height, const float color[static 4]);
 
 /**
  * Change the width and height of an existing rectangle node.
@@ -474,8 +467,7 @@ void wlr_scene_rect_set_size(struct wlr_scene_rect *rect, int width, int height)
  *
  * The color argument must be a premultiplied color value.
  */
-void wlr_scene_rect_set_color(struct wlr_scene_rect *rect,
-	const float color[WLR_SCENE_ARRAY_PARAM_SIZE(4)]);
+void wlr_scene_rect_set_color(struct wlr_scene_rect *rect, const float color[static 4]);
 
 /**
  * Add a node displaying a buffer to the scene-graph.
@@ -715,8 +707,6 @@ void wlr_scene_subsurface_tree_set_clip(struct wlr_scene_node *node,
  */
 struct wlr_scene_tree *wlr_scene_xdg_surface_create(
 	struct wlr_scene_tree *parent, struct wlr_xdg_surface *xdg_surface);
-
-#undef WLR_SCENE_ARRAY_PARAM_SIZE
 
 /**
  * Add a node displaying a layer_surface_v1 and all of its sub-surfaces to the

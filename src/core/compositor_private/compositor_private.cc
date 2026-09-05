@@ -42,7 +42,7 @@
 
 #include "src/utils/args_handler/args_handler.h"
 #include "src/utils/misc/misc.h"
-#include "src/xwayland/xwayland.h"
+#include "src/xwayland/xwayland_manager/xwayland_manager.h"
 
 namespace flakewm {
 namespace core {
@@ -232,7 +232,7 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
 
   // Start XWayland, if enabled.
   if (!startup_args.disable_xwayland) {
-    xwayland_ = std::make_unique<xwayland::XWayland>(this);
+    xwayland_ = std::make_unique<xwayland::XWaylandManager>(this);
     if (!xwayland_->Start(display_, compositor_)) {
       ABSL_LOG(ERROR) << "Failed to initialize XWayland, module skipped.";
       xwayland_.reset();

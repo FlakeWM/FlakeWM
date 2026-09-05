@@ -19,8 +19,8 @@
  * C++ XWayland include header.
  */
 
-#ifndef SRC_XWAYLAND_WLR_XWAYLAND_H_
-#define SRC_XWAYLAND_WLR_XWAYLAND_H_
+#ifndef SRC_WLR_WRAPPER_WLR_XWAYLAND_H_
+#define SRC_WLR_WRAPPER_WLR_XWAYLAND_H_
 
 #include <wayland-server-core.h>
 #include <wlr/util/addon.h>
@@ -33,4 +33,4 @@
 #include <wlr/xwayland/xwayland.h>
 #undef class
 
-#endif  // SRC_XWAYLAND_WLR_XWAYLAND_H_
+#endif  // SRC_WLR_WRAPPER_WLR_XWAYLAND_H_

@@ -9,12 +9,6 @@
 #ifndef WLR_RENDER_COLOR_H
 #define WLR_RENDER_COLOR_H
 
-#ifdef __cplusplus
-#define WLR_COLOR_ARRAY_PARAM_SIZE(size) size
-#else
-#define WLR_COLOR_ARRAY_PARAM_SIZE(size) static size
-#endif
-
 #include <stdbool.h>
 #include <stdint.h>
 #include <sys/types.h>
@@ -151,8 +145,7 @@ struct wlr_color_transform *wlr_color_transform_init_lut_3x1d(size_t dim,
  * Initialize a color transformation to apply a 3×3 matrix. Returns NULL on
  * failure.
  */
-struct wlr_color_transform *wlr_color_transform_init_matrix(
-	const float matrix[WLR_COLOR_ARRAY_PARAM_SIZE(9)]);
+struct wlr_color_transform *wlr_color_transform_init_matrix(const float matrix[static 9]);
 
 /**
  * Initialize a color transformation to apply a sequence of color transforms
@@ -176,8 +169,7 @@ void wlr_color_transform_unref(struct wlr_color_transform *tr);
  * Evaluate a color transform for a given RGB triplet.
  */
 void wlr_color_transform_eval(struct wlr_color_transform *tr,
-	float out[WLR_COLOR_ARRAY_PARAM_SIZE(3)],
-	const float in[WLR_COLOR_ARRAY_PARAM_SIZE(3)]);
+	float out[static 3], const float in[static 3]);
 
 /**
  * Obtain primaries values from a well-known primaries name.
@@ -190,9 +182,6 @@ void wlr_color_primaries_from_named(struct wlr_color_primaries *out,
  */
 void wlr_color_primaries_transform_absolute_colorimetric(
 	const struct wlr_color_primaries *source,
-	const struct wlr_color_primaries *destination,
-	float matrix[WLR_COLOR_ARRAY_PARAM_SIZE(9)]);
-
-#undef WLR_COLOR_ARRAY_PARAM_SIZE
+	const struct wlr_color_primaries *destination, float matrix[static 9]);
 
 #endif

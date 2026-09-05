@@ -19,8 +19,8 @@
  * X11 window lifecycle management.
  */
 
-#ifndef SRC_XWAYLAND_XSURFACE_H_
-#define SRC_XWAYLAND_XSURFACE_H_
+#ifndef SRC_XWAYLAND_XSURFACE_XSURFACE_H_
+#define SRC_XWAYLAND_XSURFACE_XSURFACE_H_
 
 #include "src/core/compositor_private/compositor_private.h"
 
@@ -83,4 +83,4 @@ class XSurface final : public core::CompositorPrivate::Toplevel {
 }  // namespace xwayland
 }  // namespace flakewm
 
-#endif  // SRC_XWAYLAND_XSURFACE_H_
+#endif  // SRC_XWAYLAND_XSURFACE_XSURFACE_H_
