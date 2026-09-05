@@ -29,6 +29,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <QCoreApplication>
+#include <QEventLoop>
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
@@ -59,6 +61,31 @@ constexpr std::array<uint32_t, 4> kLayerOrder = {
     ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM,
     ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND,
 };
+
+const char* ResizeCursorName(uint32_t edges) {
+  if ((edges & WLR_EDGE_TOP) && (edges & WLR_EDGE_LEFT)) {
+    return "top_left_corner";
+  }
+  if ((edges & WLR_EDGE_TOP) && (edges & WLR_EDGE_RIGHT)) {
+    return "top_right_corner";
+  }
+  if ((edges & WLR_EDGE_BOTTOM) && (edges & WLR_EDGE_LEFT)) {
+    return "bottom_left_corner";
+  }
+  if ((edges & WLR_EDGE_BOTTOM) && (edges & WLR_EDGE_RIGHT)) {
+    return "bottom_right_corner";
+  }
+  if (edges & WLR_EDGE_LEFT) {
+    return "left_side";
+  }
+  if (edges & WLR_EDGE_RIGHT) {
+    return "right_side";
+  }
+  if (edges & WLR_EDGE_TOP) {
+    return "top_side";
+  }
+  return "bottom_side";
+}
 
 }  // namespace
 
@@ -178,6 +205,10 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
   if (xdg_shell_ == nullptr) {
     return Fail("Failed to create xdg-shell global");
   }
+  xdg_decoration_manager_ = wlr_xdg_decoration_manager_v1_create(display_);
+  if (xdg_decoration_manager_ == nullptr) {
+    return Fail("Failed to create xdg-decoration manager");
+  }
   layer_shell_ = wlr_layer_shell_v1_create(display_, kLayerShellVersion);
   if (layer_shell_ == nullptr) {
     return Fail("Failed to create layer-shell global");
@@ -203,6 +234,8 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
   new_output_.Connect(&backend_->events.new_output);
   new_toplevel_.Connect(&xdg_shell_->events.new_toplevel);
   new_popup_.Connect(&xdg_shell_->events.new_popup);
+  new_xdg_decoration_.Connect(
+      &xdg_decoration_manager_->events.new_toplevel_decoration);
   new_layer_surface_.Connect(&layer_shell_->events.new_surface);
   new_input_.Connect(&backend_->events.new_input);
   cursor_motion_.Connect(&cursor_->events.motion);
@@ -255,6 +288,11 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
       wl_event_loop_add_signal(event_loop, SIGTERM, OnTerminateSignal, this);
   if (signal_sources_[0] == nullptr || signal_sources_[1] == nullptr) {
     return Fail("Failed to install compositor signal handlers");
+  }
+  qt_frame_timer_ = wl_event_loop_add_timer(event_loop, OnQtFrameTimer, this);
+  if (qt_frame_timer_ == nullptr ||
+      wl_event_source_timer_update(qt_frame_timer_, 16) < 0) {
+    return Fail("Failed to install QtQuick frame timer");
   }
 
   // Export the child session environment after the socket is ready.
@@ -414,6 +452,61 @@ void CompositorPrivate::Keyboard::OnDestroy(Keyboard* keyboard, void*) {
   keyboard->compositor->UpdateSeatCapabilities();
 }
 
+CompositorPrivate::XdgDecoration::XdgDecoration(
+    CompositorPrivate* compositor, wlr_xdg_toplevel_decoration_v1* decoration)
+    : compositor(compositor), handle(decoration) {}
+
+void CompositorPrivate::XdgDecoration::ApplyMode() {
+  if (handle == nullptr || handle->toplevel == nullptr ||
+      handle->toplevel->base == nullptr) {
+    return;
+  }
+
+  compositor->AttachSsd(compositor->FindToplevel(handle->toplevel));
+  if (!handle->toplevel->base->initialized) {
+    surface_commit.Connect(&handle->toplevel->base->surface->events.commit);
+    return;
+  }
+
+  surface_commit.Disconnect();
+  wlr_xdg_toplevel_decoration_v1_set_mode(
+      handle, WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+}
+
+void CompositorPrivate::XdgDecoration::OnRequestMode(XdgDecoration* decoration,
+                                                     void*) {
+  decoration->ApplyMode();
+}
+
+void CompositorPrivate::XdgDecoration::OnSurfaceCommit(
+    XdgDecoration* decoration, void*) {
+  if (decoration->handle != nullptr &&
+      decoration->handle->toplevel != nullptr &&
+      decoration->handle->toplevel->base->initialized) {
+    decoration->ApplyMode();
+  }
+}
+
+void CompositorPrivate::XdgDecoration::OnDestroy(XdgDecoration* decoration,
+                                                 void*) {
+  Toplevel* toplevel =
+      decoration->handle == nullptr
+          ? nullptr
+          : decoration->compositor->FindToplevel(decoration->handle->toplevel);
+  if (toplevel != nullptr) {
+    toplevel->ssd.reset();
+    toplevel->ssd_clip.reset();
+    toplevel->ssd_initial_position_pending = false;
+  }
+  decoration->request_mode.Disconnect();
+  decoration->surface_commit.Disconnect();
+  decoration->destroy.Disconnect();
+  if (decoration->handle != nullptr) {
+    decoration->handle->data = nullptr;
+    decoration->handle = nullptr;
+  }
+}
+
 CompositorPrivate::Toplevel::Toplevel(CompositorPrivate* compositor,
                                       wlr_xdg_toplevel* toplevel)
     : compositor(compositor), handle(toplevel) {}
@@ -421,20 +514,30 @@ CompositorPrivate::Toplevel::Toplevel(CompositorPrivate* compositor,
 CompositorPrivate::Toplevel::Toplevel(CompositorPrivate* compositor)
     : compositor(compositor) {}
 
-bool CompositorPrivate::Toplevel::IsAlive() const {
+CompositorPrivate::Toplevel::~Toplevel() = default;
+
+bool CompositorPrivate::Toplevel::IsAlive() const { return handle != nullptr; }
+
+bool CompositorPrivate::Toplevel::IsXWayland() const { return false; }
+
+bool CompositorPrivate::Toplevel::WantsFocus() const { return true; }
+
+bool CompositorPrivate::Toplevel::CanManage() const { return true; }
+
+bool CompositorPrivate::Toplevel::CanMinimize() const {
   return handle != nullptr;
 }
 
-bool CompositorPrivate::Toplevel::IsXWayland() const {
-  return false;
-}
-
-bool CompositorPrivate::Toplevel::WantsFocus() const {
-  return true;
-}
-
-bool CompositorPrivate::Toplevel::CanManage() const {
-  return true;
+bool CompositorPrivate::Toplevel::CanMaximize() const {
+  if (handle == nullptr || handle->parent != nullptr) {
+    return false;
+  }
+  const wlr_xdg_toplevel_state& state = handle->current;
+  const bool fixed_width = state.min_width > 0 && state.max_width > 0 &&
+                           state.min_width == state.max_width;
+  const bool fixed_height = state.min_height > 0 && state.max_height > 0 &&
+                            state.min_height == state.max_height;
+  return !fixed_width && !fixed_height;
 }
 
 bool CompositorPrivate::Toplevel::RequestedMaximized() const {
@@ -459,10 +562,11 @@ void CompositorPrivate::Toplevel::Configure(const wlr_box& box) const {
   }
 
   const wlr_box geometry = Geometry();
-  wlr_scene_node_set_position(&scene_tree->node, box.x - geometry.x,
-                              box.y - geometry.y);
+  const wlr_box content = ssd == nullptr ? box : ssd->ContentGeometry(box);
+  wlr_scene_node_set_position(&scene_tree->node, content.x - geometry.x,
+                              content.y - geometry.y);
   if (handle != nullptr) {
-    wlr_xdg_toplevel_set_size(handle, box.width, box.height);
+    wlr_xdg_toplevel_set_size(handle, content.width, content.height);
   }
 }
 
@@ -487,6 +591,34 @@ void CompositorPrivate::Toplevel::SetFullscreenState(bool fullscreen) const {
 }
 
 void CompositorPrivate::Toplevel::Restack() const {}
+
+wlr_box CompositorPrivate::Toplevel::FrameGeometry() const {
+  const wlr_box geometry = Geometry();
+  return ssd == nullptr ? geometry : ssd->FrameGeometry(geometry);
+}
+
+void CompositorPrivate::Toplevel::UpdateCapabilities() {
+  uint32_t capabilities = WLR_XDG_TOPLEVEL_WM_CAPABILITIES_FULLSCREEN;
+  if (CanMaximize()) {
+    capabilities |= WLR_XDG_TOPLEVEL_WM_CAPABILITIES_MAXIMIZE;
+  }
+  if (CanMinimize()) {
+    capabilities |= WLR_XDG_TOPLEVEL_WM_CAPABILITIES_MINIMIZE;
+  }
+
+  if (ssd != nullptr) {
+    ssd->SetCapabilities(CanMinimize(), CanMaximize());
+  }
+  if (handle == nullptr || handle->base == nullptr ||
+      !handle->base->initialized ||
+      wl_resource_get_version(handle->resource) < kXdgShellVersion ||
+      (capabilities_advertised && advertised_capabilities == capabilities)) {
+    return;
+  }
+  wlr_xdg_toplevel_set_wm_capabilities(handle, capabilities);
+  advertised_capabilities = capabilities;
+  capabilities_advertised = true;
+}
 
 void CompositorPrivate::Toplevel::OnMap(Toplevel* toplevel, void*) {
   // Honor the initial state request before focusing the new window.
@@ -521,30 +653,48 @@ void CompositorPrivate::Toplevel::OnCommit(Toplevel* toplevel, void*) {
     return;
   }
 
-  // Initial commit advertises the states supported by this WM.
+  toplevel->UpdateCapabilities();
+
+  // The initial configure leaves sizing to the client.
   if (toplevel->handle->base->initial_commit) {
-    if (wl_resource_get_version(toplevel->handle->resource) >=
-        kXdgShellVersion) {
-      wlr_xdg_toplevel_set_wm_capabilities(
-          toplevel->handle, WLR_XDG_TOPLEVEL_WM_CAPABILITIES_MAXIMIZE |
-                                WLR_XDG_TOPLEVEL_WM_CAPABILITIES_FULLSCREEN |
-                                WLR_XDG_TOPLEVEL_WM_CAPABILITIES_MINIMIZE);
-    }
     wlr_xdg_toplevel_set_size(toplevel->handle, 0, 0);
   }
 
-  // Client-side decorations can change their geometry after configure.
-  // Re-align the window using the geometry from the latest commit.
   const wlr_box geometry = toplevel->Geometry();
+  if (toplevel->ssd != nullptr) {
+    toplevel->ssd->SetGeometry(geometry);
+    toplevel->ssd->SetTitle(toplevel->handle->title == nullptr
+                                ? std::string{}
+                                : toplevel->handle->title);
+    toplevel->ssd->SetAppId(toplevel->handle->app_id == nullptr
+                                ? std::string{}
+                                : toplevel->handle->app_id);
+    if (toplevel->ssd_clip != nullptr) {
+      toplevel->ssd_clip->Update(geometry, toplevel->maximized);
+    }
+    if (toplevel->ssd_initial_position_pending && geometry.width > 0 &&
+        geometry.height > 0) {
+      const wlr_box frame = toplevel->FrameGeometry();
+      if (toplevel->scene_tree->node.x == 0 &&
+          toplevel->scene_tree->node.y == 0) {
+        wlr_scene_node_set_position(&toplevel->scene_tree->node, -frame.x,
+                                    -frame.y);
+      }
+      toplevel->ssd_initial_position_pending = false;
+    }
+  }
+
+  // Geometry can change after configure. Keep the requested frame position.
+  const wlr_box frame = toplevel->FrameGeometry();
   if (toplevel->maximized && toplevel->maximized_box.width > 0 &&
       toplevel->maximized_box.height > 0) {
     wlr_scene_node_set_position(&toplevel->scene_tree->node,
-                                toplevel->maximized_box.x - geometry.x,
-                                toplevel->maximized_box.y - geometry.y);
+                                toplevel->maximized_box.x - frame.x,
+                                toplevel->maximized_box.y - frame.y);
   } else if (toplevel->restore_position_pending && toplevel->has_restore_box) {
     wlr_scene_node_set_position(&toplevel->scene_tree->node,
-                                toplevel->restore_box.x - geometry.x,
-                                toplevel->restore_box.y - geometry.y);
+                                toplevel->restore_box.x - frame.x,
+                                toplevel->restore_box.y - frame.y);
     toplevel->restore_position_pending = false;
   }
 }
@@ -552,14 +702,16 @@ void CompositorPrivate::Toplevel::OnCommit(Toplevel* toplevel, void*) {
 void CompositorPrivate::Toplevel::OnRequestMaximize(Toplevel* toplevel, void*) {
   // Apply the state requested by the client.
   if (toplevel->CanManage()) {
-    toplevel->compositor->SetMaximized(toplevel,
-                                       toplevel->RequestedMaximized());
+    toplevel->compositor->SetMaximized(
+        toplevel, toplevel->CanMaximize() && toplevel->RequestedMaximized());
   }
 }
 
 void CompositorPrivate::Toplevel::OnRequestMinimize(Toplevel* toplevel, void*) {
   // Minimize hides the scene node until another shell component restores it.
-  toplevel->compositor->Minimize(toplevel);
+  if (toplevel->CanMinimize()) {
+    toplevel->compositor->Minimize(toplevel);
+  }
 }
 
 void CompositorPrivate::Toplevel::OnRequestFullscreen(Toplevel* toplevel,
@@ -579,6 +731,32 @@ void CompositorPrivate::Toplevel::OnRequestResize(
                                          event->edges);
 }
 
+void CompositorPrivate::Toplevel::OnSetTitle(Toplevel* toplevel, void*) {
+  if (toplevel->ssd != nullptr && toplevel->handle != nullptr) {
+    toplevel->ssd->SetTitle(toplevel->handle->title == nullptr
+                                ? std::string{}
+                                : toplevel->handle->title);
+  }
+}
+
+void CompositorPrivate::Toplevel::OnSetAppId(Toplevel* toplevel, void*) {
+  if (toplevel->ssd != nullptr && toplevel->handle != nullptr) {
+    toplevel->ssd->SetAppId(toplevel->handle->app_id == nullptr
+                                ? std::string{}
+                                : toplevel->handle->app_id);
+  }
+}
+
+void CompositorPrivate::Toplevel::OnSetParent(Toplevel* toplevel, void*) {
+  toplevel->UpdateCapabilities();
+  if (toplevel->ssd != nullptr && toplevel->handle != nullptr) {
+    toplevel->ssd->SetDialog(toplevel->handle->parent != nullptr);
+  }
+  if (toplevel->maximized && !toplevel->CanMaximize()) {
+    toplevel->compositor->SetMaximized(toplevel, false);
+  }
+}
+
 void CompositorPrivate::Toplevel::OnDestroy(Toplevel* toplevel, void*) {
   // End its active grab before disconnecting protocol listeners.
   if (toplevel->compositor->grabbed_toplevel_ == toplevel) {
@@ -593,6 +771,11 @@ void CompositorPrivate::Toplevel::OnDestroy(Toplevel* toplevel, void*) {
   toplevel->request_maximize.Disconnect();
   toplevel->request_minimize.Disconnect();
   toplevel->request_fullscreen.Disconnect();
+  toplevel->set_title.Disconnect();
+  toplevel->set_app_id.Disconnect();
+  toplevel->set_parent.Disconnect();
+  toplevel->ssd.reset();
+  toplevel->ssd_clip.reset();
   toplevel->handle = nullptr;
   toplevel->scene_tree = nullptr;
   toplevel->mapped = false;
@@ -689,17 +872,18 @@ CompositorPrivate::Toplevel* CompositorPrivate::ToplevelAt(
   *surface = nullptr;
   wlr_scene_node* node = wlr_scene_node_at(&scene_->tree.node, layout_x,
                                            layout_y, surface_x, surface_y);
-  if (node == nullptr || node->type != WLR_SCENE_NODE_BUFFER) {
+  if (node == nullptr) {
     return nullptr;
   }
 
-  // Only surface buffers can receive pointer focus.
-  wlr_scene_surface* scene_surface =
-      wlr_scene_surface_try_from_buffer(wlr_scene_buffer_from_node(node));
-  if (scene_surface == nullptr) {
-    return nullptr;
+  // Decoration buffers belong to a toplevel but never receive client focus.
+  if (node->type == WLR_SCENE_NODE_BUFFER) {
+    wlr_scene_surface* scene_surface =
+        wlr_scene_surface_try_from_buffer(wlr_scene_buffer_from_node(node));
+    if (scene_surface != nullptr) {
+      *surface = scene_surface->surface;
+    }
   }
-  *surface = scene_surface->surface;
 
   // Walk up until reaching the toplevel tree marked in OnNewToplevel().
   wlr_scene_tree* tree = node->parent;
@@ -707,6 +891,59 @@ CompositorPrivate::Toplevel* CompositorPrivate::ToplevelAt(
     tree = tree->node.parent;
   }
   return tree == nullptr ? nullptr : static_cast<Toplevel*>(tree->node.data);
+}
+
+CompositorPrivate::Toplevel* CompositorPrivate::FindToplevel(
+    wlr_xdg_toplevel* handle) const {
+  for (const std::unique_ptr<Toplevel>& toplevel : toplevels_) {
+    if (toplevel->handle == handle) {
+      return toplevel.get();
+    }
+  }
+  return nullptr;
+}
+
+void CompositorPrivate::AttachSsd(Toplevel* toplevel) {
+  if (toplevel == nullptr || toplevel->scene_tree == nullptr ||
+      toplevel->ssd != nullptr) {
+    return;
+  }
+
+  auto clip =
+      view::SsdSurfaceClip::Create(toplevel->scene_tree, toplevel->Surface());
+  toplevel->ssd = view::Ssd::Create(toplevel->scene_tree);
+  if (toplevel->ssd == nullptr) {
+    ABSL_LOG(ERROR) << "Failed to create server-side decoration";
+    return;
+  }
+  toplevel->ssd->SetMaximized(toplevel->maximized);
+  toplevel->ssd->SetDialog(toplevel->handle->parent != nullptr);
+  toplevel->ssd->SetCapabilities(toplevel->CanMinimize(),
+                                 toplevel->CanMaximize());
+  toplevel->ssd->SetGeometry(toplevel->Geometry());
+  toplevel->ssd->SetTitle(toplevel->handle->title == nullptr
+                              ? std::string{}
+                              : toplevel->handle->title);
+  toplevel->ssd->SetAppId(toplevel->handle->app_id == nullptr
+                              ? std::string{}
+                              : toplevel->handle->app_id);
+  toplevel->ssd_clip = std::move(clip);
+  if (toplevel->ssd_clip == nullptr) {
+    ABSL_LOG(ERROR) << "Failed to create SSD surface clip";
+  } else {
+    toplevel->ssd_clip->Update(toplevel->Geometry(), toplevel->maximized);
+  }
+  toplevel->ssd_initial_position_pending = true;
+}
+
+view::Ssd::HitTarget CompositorPrivate::SsdHitAt(
+    const Toplevel* toplevel) const {
+  if (toplevel == nullptr || toplevel->ssd == nullptr ||
+      toplevel->scene_tree == nullptr) {
+    return {};
+  }
+  return toplevel->ssd->HitTest(cursor_->x - toplevel->scene_tree->node.x,
+                                cursor_->y - toplevel->scene_tree->node.y);
 }
 
 void CompositorPrivate::FocusToplevel(Toplevel* toplevel) {
@@ -725,6 +962,12 @@ void CompositorPrivate::FocusToplevel(Toplevel* toplevel) {
             ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE) {
       FocusLayerSurface(layer_surface);
       return;
+    }
+  }
+
+  for (const std::unique_ptr<Toplevel>& candidate : toplevels_) {
+    if (candidate->ssd != nullptr) {
+      candidate->ssd->SetActive(candidate.get() == toplevel);
     }
   }
 
@@ -793,6 +1036,12 @@ void CompositorPrivate::FocusLayerSurface(LayerSurface* layer_surface) {
       layer_surface->handle->current.keyboard_interactive ==
           ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE) {
     return;
+  }
+
+  for (const std::unique_ptr<Toplevel>& toplevel : toplevels_) {
+    if (toplevel->ssd != nullptr) {
+      toplevel->ssd->SetActive(false);
+    }
   }
 
   wlr_surface* surface = layer_surface->handle->surface;
@@ -933,23 +1182,36 @@ void CompositorPrivate::SetMaximized(Toplevel* toplevel, bool maximized) {
 
   // Duplicate requests still need their client-visible state refreshed.
   if (maximized == toplevel->maximized) {
+    if (toplevel->ssd != nullptr) {
+      toplevel->ssd->SetMaximized(maximized);
+    }
     toplevel->SetMaximizedState(maximized);
     return;
   }
 
-  const wlr_box geometry = toplevel->Geometry();
+  const wlr_box frame = toplevel->FrameGeometry();
   if (maximized) {
-    // Save geometry coordinates instead of the decorated surface origin.
-    if (geometry.width > 0 && geometry.height > 0) {
+    // Save the complete frame, including the server-side decoration.
+    if (frame.width > 0 && frame.height > 0) {
       toplevel->restore_box = {
-          .x = toplevel->scene_tree->node.x + geometry.x,
-          .y = toplevel->scene_tree->node.y + geometry.y,
-          .width = geometry.width,
-          .height = geometry.height,
+          .x = toplevel->scene_tree->node.x + frame.x,
+          .y = toplevel->scene_tree->node.y + frame.y,
+          .width = frame.width,
+          .height = frame.height,
       };
       toplevel->has_restore_box = true;
     }
+  }
 
+  toplevel->maximized = maximized;
+  if (toplevel->ssd != nullptr) {
+    toplevel->ssd->SetMaximized(maximized);
+  }
+  if (toplevel->ssd_clip != nullptr) {
+    toplevel->ssd_clip->Update(toplevel->Geometry(), maximized);
+  }
+
+  if (maximized) {
     // Maximize onto the usable area of the output under the pointer.
     toplevel->maximized_output =
         wlr_output_layout_output_at(output_layout_, cursor_->x, cursor_->y);
@@ -973,8 +1235,6 @@ void CompositorPrivate::SetMaximized(Toplevel* toplevel, bool maximized) {
     toplevel->restore_position_pending = true;
   }
 
-  // Send the final state to the client.
-  toplevel->maximized = maximized;
   if (!maximized) {
     toplevel->maximized_output = nullptr;
   }
@@ -983,15 +1243,15 @@ void CompositorPrivate::SetMaximized(Toplevel* toplevel, bool maximized) {
 
 void CompositorPrivate::ToggleMaximized(Toplevel* toplevel) {
   // Used by titlebar double click.
-  if (toplevel != nullptr) {
+  if (toplevel != nullptr && toplevel->CanMaximize()) {
     SetMaximized(toplevel, !toplevel->maximized);
   }
 }
 
 void CompositorPrivate::Minimize(Toplevel* toplevel) {
   // A minimized window stays mapped but is removed from the scene.
-  if (toplevel == nullptr || !toplevel->mapped || toplevel->minimized ||
-      toplevel->scene_tree == nullptr) {
+  if (toplevel == nullptr || !toplevel->CanMinimize() || !toplevel->mapped ||
+      toplevel->minimized || toplevel->scene_tree == nullptr) {
     return;
   }
   toplevel->minimized = true;
@@ -1018,18 +1278,23 @@ void CompositorPrivate::RestoreForMove(Toplevel* toplevel) {
           ? std::clamp((cursor_->x - output_box.x) / output_box.width, 0.0, 1.0)
           : 0.5;
   const wlr_box restore_box = toplevel->restore_box;
-  const wlr_box geometry = toplevel->Geometry();
-  const double titlebar_offset = std::clamp(
-      cursor_->y - (toplevel->scene_tree->node.y + geometry.y), 0.0, 48.0);
+  const wlr_box frame = toplevel->FrameGeometry();
+  const double maximum_titlebar_offset =
+      toplevel->ssd == nullptr ? 48.0 : toplevel->ssd->TitlebarHeight();
+  const double titlebar_offset =
+      std::clamp(cursor_->y - (toplevel->scene_tree->node.y + frame.y), 0.0,
+                 maximum_titlebar_offset);
 
   // Save the new restore position for the coming normal-state commit.
   SetMaximized(toplevel, false);
-  const int geometry_x = cursor_->x - restore_box.width * horizontal_ratio;
-  const int geometry_y = cursor_->y - titlebar_offset;
-  toplevel->restore_box.x = geometry_x;
-  toplevel->restore_box.y = geometry_y;
+  const int frame_x = cursor_->x - restore_box.width * horizontal_ratio;
+  const int frame_y = cursor_->y - titlebar_offset;
+  toplevel->restore_box.x = frame_x;
+  toplevel->restore_box.y = frame_y;
+  const wlr_box restored_frame = toplevel->FrameGeometry();
   wlr_scene_node_set_position(&toplevel->scene_tree->node,
-                              geometry_x - geometry.x, geometry_y - geometry.y);
+                              frame_x - restored_frame.x,
+                              frame_y - restored_frame.y);
 }
 
 bool CompositorPrivate::CursorAtOutputTop() const {
@@ -1044,7 +1309,7 @@ bool CompositorPrivate::IsTitlebarPoint(const Toplevel* toplevel,
                                         wlr_surface* surface,
                                         double surface_y) const {
   // Only the main surface owns the client-side titlebar.
-  if (toplevel == nullptr || !toplevel->IsAlive() ||
+  if (toplevel == nullptr || !toplevel->IsAlive() || toplevel->ssd != nullptr ||
       surface != toplevel->Surface()) {
     return false;
   }
@@ -1095,7 +1360,7 @@ void CompositorPrivate::BeginInteractive(Toplevel* toplevel, CursorMode mode,
   }
 
   // Resize grabs use global geometry and the requested border.
-  grab_box_ = toplevel->Geometry();
+  grab_box_ = toplevel->FrameGeometry();
   grab_box_.x += toplevel->scene_tree->node.x;
   grab_box_.y += toplevel->scene_tree->node.y;
   const double border_x =
@@ -1164,6 +1429,21 @@ void CompositorPrivate::ProcessCursorMotion(uint32_t time_msec) {
   wlr_surface* surface = nullptr;
   Toplevel* toplevel =
       ToplevelAt(cursor_->x, cursor_->y, &surface, &surface_x, &surface_y);
+  const view::Ssd::HitTarget ssd_hit = SsdHitAt(toplevel);
+  for (const std::unique_ptr<Toplevel>& candidate : toplevels_) {
+    if (candidate->ssd != nullptr) {
+      candidate->ssd->SetHovered(
+          candidate.get() == toplevel ? ssd_hit : view::Ssd::HitTarget{});
+    }
+  }
+  if (ssd_hit.part != view::Ssd::Part::kNone) {
+    wlr_cursor_set_xcursor(cursor_, cursor_manager_,
+                           ssd_hit.part == view::Ssd::Part::kResize
+                               ? ResizeCursorName(ssd_hit.edges)
+                               : "default");
+    wlr_seat_pointer_clear_focus(seat_);
+    return;
+  }
   if (toplevel == nullptr) {
     wlr_cursor_set_xcursor(cursor_, cursor_manager_, "default");
   }
@@ -1196,6 +1476,11 @@ void CompositorPrivate::OnCursorButton(CompositorPrivate* compositor,
                                        wlr_pointer_button_event* event) {
   // WLR mouse release event.
   if (event->state == WL_POINTER_BUTTON_STATE_RELEASED) {
+    for (const std::unique_ptr<Toplevel>& toplevel : compositor->toplevels_) {
+      if (toplevel->ssd != nullptr) {
+        toplevel->ssd->SetPressed({});
+      }
+    }
     // If suppress_button_release_ is true then it is triggered by
     // "double click to maximize", just ignore.
     if (compositor->suppress_button_release_) {
@@ -1217,6 +1502,61 @@ void CompositorPrivate::OnCursorButton(CompositorPrivate* compositor,
   Toplevel* toplevel =
       compositor->ToplevelAt(compositor->cursor_->x, compositor->cursor_->y,
                              &surface, &surface_x, &surface_y);
+  const view::Ssd::HitTarget ssd_hit = compositor->SsdHitAt(toplevel);
+
+  if (ssd_hit.part != view::Ssd::Part::kNone) {
+    compositor->FocusToplevel(toplevel);
+    compositor->suppress_button_release_ = true;
+    if (event->button != BTN_LEFT) {
+      return;
+    }
+
+    toplevel->ssd->SetPressed(ssd_hit);
+    if (ssd_hit.part == view::Ssd::Part::kClose) {
+      compositor->last_click_toplevel_ = nullptr;
+      wlr_xdg_toplevel_send_close(toplevel->handle);
+      return;
+    }
+    if (ssd_hit.part == view::Ssd::Part::kMinimize) {
+      compositor->last_click_toplevel_ = nullptr;
+      compositor->Minimize(toplevel);
+      return;
+    }
+    if (ssd_hit.part == view::Ssd::Part::kMaximize) {
+      compositor->last_click_toplevel_ = nullptr;
+      compositor->ToggleMaximized(toplevel);
+      return;
+    }
+    if (ssd_hit.part == view::Ssd::Part::kResize) {
+      compositor->last_click_toplevel_ = nullptr;
+      compositor->BeginInteractive(toplevel, CursorMode::kResize,
+                                   ssd_hit.edges);
+      return;
+    }
+
+    const bool same_toplevel = compositor->last_click_toplevel_ == toplevel;
+    const bool within_interval =
+        event->time_msec - compositor->last_click_time_msec_ <=
+        kDoubleClickIntervalMs;
+    const bool within_distance =
+        std::abs(compositor->cursor_->x - compositor->last_click_x_) <=
+            kDoubleClickDistance &&
+        std::abs(compositor->cursor_->y - compositor->last_click_y_) <=
+            kDoubleClickDistance;
+    if (same_toplevel && within_interval && within_distance) {
+      compositor->last_click_toplevel_ = nullptr;
+      compositor->EndInteractive();
+      compositor->ToggleMaximized(toplevel);
+      return;
+    }
+
+    compositor->last_click_toplevel_ = toplevel;
+    compositor->last_click_time_msec_ = event->time_msec;
+    compositor->last_click_x_ = compositor->cursor_->x;
+    compositor->last_click_y_ = compositor->cursor_->y;
+    compositor->BeginInteractive(toplevel, CursorMode::kMove, 0);
+    return;
+  }
 
   // A second nearby titlebar press toggles maximized state.
   const bool titlebar_click =
@@ -1385,7 +1725,20 @@ void CompositorPrivate::OnNewToplevel(CompositorPrivate* compositor,
   toplevel->request_maximize.Connect(&handle->events.request_maximize);
   toplevel->request_minimize.Connect(&handle->events.request_minimize);
   toplevel->request_fullscreen.Connect(&handle->events.request_fullscreen);
+  toplevel->set_title.Connect(&handle->events.set_title);
+  toplevel->set_app_id.Connect(&handle->events.set_app_id);
+  toplevel->set_parent.Connect(&handle->events.set_parent);
   compositor->toplevels_.push_back(std::move(toplevel));
+}
+
+void CompositorPrivate::OnNewXdgDecoration(
+    CompositorPrivate* compositor, wlr_xdg_toplevel_decoration_v1* decoration) {
+  auto state = std::make_unique<XdgDecoration>(compositor, decoration);
+  decoration->data = state.get();
+  state->request_mode.Connect(&decoration->events.request_mode);
+  state->destroy.Connect(&decoration->events.destroy);
+  state->ApplyMode();
+  compositor->xdg_decorations_.push_back(std::move(state));
 }
 
 void CompositorPrivate::OnNewPopup(CompositorPrivate* compositor,
@@ -1424,6 +1777,19 @@ int CompositorPrivate::OnTerminateSignal(int signal, void* data) {
   ABSL_LOG(INFO) << "Received signal " << signal << ", shutting down!";
   static_cast<CompositorPrivate*>(data)->Stop();
   return 0;
+}
+
+int CompositorPrivate::OnQtFrameTimer(void* data) {
+  auto* compositor = static_cast<CompositorPrivate*>(data);
+  QCoreApplication::processEvents(QEventLoop::AllEvents);
+  for (const std::unique_ptr<Toplevel>& toplevel : compositor->toplevels_) {
+    if (toplevel->ssd != nullptr) {
+      toplevel->ssd->Render();
+    }
+  }
+  return compositor->qt_frame_timer_ == nullptr
+             ? 0
+             : wl_event_source_timer_update(compositor->qt_frame_timer_, 16);
 }
 
 bool CompositorPrivate::ConfigureBackendEnvironment(
@@ -1476,6 +1842,10 @@ bool CompositorPrivate::Spawn(const std::string& command) const {
   std::signal(SIGTERM, SIG_DFL);
   std::signal(SIGPIPE, SIG_DFL);
 
+  // The compositor uses QtQuick's software adaptation for its own buffers.
+  // Do not force that choice onto the session.
+  unsetenv("QT_QUICK_BACKEND");
+
   // Start user session using sh.
   execl("/bin/sh", "/bin/sh", "-c", command.c_str(),
         static_cast<char*>(nullptr));
@@ -1506,6 +1876,7 @@ void CompositorPrivate::Destroy() {
 
   // Disconnect all signal listeners
   new_layer_surface_.Disconnect();
+  new_xdg_decoration_.Disconnect();
   new_popup_.Disconnect();
   new_toplevel_.Disconnect();
   new_output_.Disconnect();
@@ -1520,8 +1891,14 @@ void CompositorPrivate::Destroy() {
   cursor_motion_absolute_.Disconnect();
   cursor_motion_.Disconnect();
 
+  if (qt_frame_timer_ != nullptr) {
+    wl_event_source_remove(qt_frame_timer_);
+    qt_frame_timer_ = nullptr;
+  }
+
   // Drop local protocol wrappers while their wlroots objects still exist.
   ResetCursorMode();
+  xdg_decorations_.clear();
   popups_.clear();
   layer_surfaces_.clear();
   toplevels_.clear();
@@ -1582,6 +1959,7 @@ void CompositorPrivate::Destroy() {
     compositor_ = nullptr;
     layer_shell_ = nullptr;
     xdg_shell_ = nullptr;
+    xdg_decoration_manager_ = nullptr;
   }
 }
 

@@ -40,6 +40,8 @@ class XSurface final : public core::CompositorPrivate::Toplevel {
   bool IsXWayland() const override;
   bool WantsFocus() const override;
   bool CanManage() const override;
+  bool CanMinimize() const override;
+  bool CanMaximize() const override;
   bool RequestedMaximized() const override;
   bool RequestedFullscreen() const override;
   wlr_surface* Surface() const override;

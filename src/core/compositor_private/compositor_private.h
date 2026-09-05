@@ -31,6 +31,8 @@
 #include "src/protocol/layer_shell/layer_surface.h"
 #include "src/utils/args_handler/args_handler.h"
 #include "src/utils/signal_listener.h"
+#include "src/view/ssd/ssd/ssd.h"
+#include "src/view/ssd/ssd_surface_clip/ssd_surface_clip.h"
 #include "src/wlr_wrapper/wlroots.h"
 
 namespace flakewm {
@@ -100,15 +102,35 @@ class CompositorPrivate final {
     utils::SignalListener<Keyboard, void> destroy;
   };
 
+  struct XdgDecoration {
+    XdgDecoration(CompositorPrivate* compositor,
+                  wlr_xdg_toplevel_decoration_v1* decoration);
+
+    void ApplyMode();
+    static void OnRequestMode(XdgDecoration* decoration, void*);
+    static void OnSurfaceCommit(XdgDecoration* decoration, void*);
+    static void OnDestroy(XdgDecoration* decoration, void*);
+
+    CompositorPrivate* compositor;
+    wlr_xdg_toplevel_decoration_v1* handle;
+    utils::SignalListener<XdgDecoration, void> request_mode{this,
+                                                            OnRequestMode};
+    utils::SignalListener<XdgDecoration, void> surface_commit{this,
+                                                              OnSurfaceCommit};
+    utils::SignalListener<XdgDecoration, void> destroy{this, OnDestroy};
+  };
+
   struct Toplevel {
     Toplevel(CompositorPrivate* compositor, wlr_xdg_toplevel* toplevel);
     explicit Toplevel(CompositorPrivate* compositor);
-    virtual ~Toplevel() = default;
+    virtual ~Toplevel();
 
     virtual bool IsAlive() const;
     virtual bool IsXWayland() const;
     virtual bool WantsFocus() const;
     virtual bool CanManage() const;
+    virtual bool CanMinimize() const;
+    virtual bool CanMaximize() const;
     virtual bool RequestedMaximized() const;
     virtual bool RequestedFullscreen() const;
     virtual wlr_surface* Surface() const;
@@ -119,6 +141,8 @@ class CompositorPrivate final {
     virtual void SetMinimizedState(bool minimized) const;
     virtual void SetFullscreenState(bool fullscreen) const;
     virtual void Restack() const;
+    wlr_box FrameGeometry() const;
+    void UpdateCapabilities();
 
     static void OnMap(Toplevel* toplevel, void*);
     static void OnUnmap(Toplevel* toplevel, void*);
@@ -129,6 +153,9 @@ class CompositorPrivate final {
     static void OnRequestMove(Toplevel* toplevel, void*);
     static void OnRequestResize(Toplevel* toplevel,
                                 wlr_xdg_toplevel_resize_event* event);
+    static void OnSetTitle(Toplevel* toplevel, void*);
+    static void OnSetAppId(Toplevel* toplevel, void*);
+    static void OnSetParent(Toplevel* toplevel, void*);
     static void OnDestroy(Toplevel* toplevel, void*);
 
     CompositorPrivate* compositor;
@@ -139,9 +166,14 @@ class CompositorPrivate final {
     bool minimized = false;
     bool has_restore_box = false;
     bool restore_position_pending = false;
+    bool capabilities_advertised = false;
+    uint32_t advertised_capabilities = 0;
     wlr_box restore_box = {};
     wlr_box maximized_box = {};
     wlr_output* maximized_output = nullptr;
+    std::unique_ptr<view::Ssd> ssd;
+    std::unique_ptr<view::SsdSurfaceClip> ssd_clip;
+    bool ssd_initial_position_pending = false;
     utils::SignalListener<Toplevel, void> map{this, OnMap};
     utils::SignalListener<Toplevel, void> unmap{this, OnUnmap};
     utils::SignalListener<Toplevel, void> commit{this, OnCommit};
@@ -155,6 +187,9 @@ class CompositorPrivate final {
                                                            OnRequestMinimize};
     utils::SignalListener<Toplevel, void> request_fullscreen{
         this, OnRequestFullscreen};
+    utils::SignalListener<Toplevel, void> set_title{this, OnSetTitle};
+    utils::SignalListener<Toplevel, void> set_app_id{this, OnSetAppId};
+    utils::SignalListener<Toplevel, void> set_parent{this, OnSetParent};
   };
 
   struct Popup {
@@ -176,6 +211,9 @@ class CompositorPrivate final {
                          wlr_input_device* device);
   Toplevel* ToplevelAt(double layout_x, double layout_y, wlr_surface** surface,
                        double* surface_x, double* surface_y) const;
+  Toplevel* FindToplevel(wlr_xdg_toplevel* handle) const;
+  void AttachSsd(Toplevel* toplevel);
+  view::Ssd::HitTarget SsdHitAt(const Toplevel* toplevel) const;
   void FocusToplevel(Toplevel* toplevel);
   void FocusNextToplevel(Toplevel* excluding);
   void FocusLayerSurface(LayerSurface* layer_surface);
@@ -217,10 +255,13 @@ class CompositorPrivate final {
   static void OnNewOutput(CompositorPrivate* compositor, wlr_output* output);
   static void OnNewToplevel(CompositorPrivate* compositor,
                             wlr_xdg_toplevel* handle);
+  static void OnNewXdgDecoration(CompositorPrivate* compositor,
+                                 wlr_xdg_toplevel_decoration_v1* decoration);
   static void OnNewPopup(CompositorPrivate* compositor, wlr_xdg_popup* handle);
   static void OnNewLayerSurface(CompositorPrivate* compositor,
                                 wlr_layer_surface_v1* handle);
   static int OnTerminateSignal(int signal, void* data);
+  static int OnQtFrameTimer(void* data);
 
   bool ConfigureBackendEnvironment(
       const utils::StartupArgs& startup_args) const;
@@ -237,6 +278,7 @@ class CompositorPrivate final {
   wlr_scene* scene_ = nullptr;
   wlr_scene_output_layout* scene_layout_ = nullptr;
   wlr_xdg_shell* xdg_shell_ = nullptr;
+  wlr_xdg_decoration_manager_v1* xdg_decoration_manager_ = nullptr;
   wlr_layer_shell_v1* layer_shell_ = nullptr;
   std::unique_ptr<xwayland::XWaylandManager> xwayland_;
   wlr_seat* seat_ = nullptr;
@@ -249,6 +291,8 @@ class CompositorPrivate final {
                                                                    OnNewOutput};
   utils::SignalListener<CompositorPrivate, wlr_xdg_toplevel> new_toplevel_{
       this, OnNewToplevel};
+  utils::SignalListener<CompositorPrivate, wlr_xdg_toplevel_decoration_v1>
+      new_xdg_decoration_{this, OnNewXdgDecoration};
   utils::SignalListener<CompositorPrivate, wlr_xdg_popup> new_popup_{
       this, OnNewPopup};
   utils::SignalListener<CompositorPrivate, wlr_layer_surface_v1>
@@ -276,9 +320,11 @@ class CompositorPrivate final {
                         wlr_seat_request_set_primary_selection_event>
       request_primary_selection_{this, OnRequestPrimarySelection};
   std::array<wl_event_source*, 2> signal_sources_ = {};
+  wl_event_source* qt_frame_timer_ = nullptr;
 
   std::vector<std::unique_ptr<Output>> outputs_;
   std::vector<std::unique_ptr<Keyboard>> keyboards_;
+  std::vector<std::unique_ptr<XdgDecoration>> xdg_decorations_;
   std::vector<std::unique_ptr<Toplevel>> toplevels_;
   std::vector<std::unique_ptr<LayerSurface>> layer_surfaces_;
   std::vector<std::unique_ptr<Popup>> popups_;

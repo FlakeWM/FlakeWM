@@ -19,13 +19,13 @@
  * X11 window lifecycle management.
  */
 
+#include "src/xwayland/xsurface/xsurface.h"
+
 #include <absl/log/absl_log.h>
 
 #include <algorithm>
 #include <cstdint>
 #include <limits>
-
-#include "src/xwayland/xsurface/xsurface.h"
 
 namespace flakewm {
 namespace xwayland {
@@ -50,17 +50,11 @@ XSurface::XSurface(core::CompositorPrivate* compositor,
   }
 }
 
-XSurface::~XSurface() {
-  Dissociate();
-}
+XSurface::~XSurface() { Dissociate(); }
 
-bool XSurface::IsAlive() const {
-  return handle != nullptr;
-}
+bool XSurface::IsAlive() const { return handle != nullptr; }
 
-bool XSurface::IsXWayland() const {
-  return true;
-}
+bool XSurface::IsXWayland() const { return true; }
 
 bool XSurface::WantsFocus() const {
   if (handle == nullptr || !handle->override_redirect) {
@@ -72,6 +66,14 @@ bool XSurface::WantsFocus() const {
 
 bool XSurface::CanManage() const {
   return handle != nullptr && !handle->override_redirect;
+}
+
+bool XSurface::CanMinimize() const {
+  return CanManage() && handle->parent == nullptr && !handle->modal;
+}
+
+bool XSurface::CanMaximize() const {
+  return CanManage() && handle->parent == nullptr && !handle->modal;
 }
 
 bool XSurface::RequestedMaximized() const {
@@ -197,12 +199,10 @@ void XSurface::OnRequestConfigure(XSurface* surface,
     return;
   }
 
-  surface->Configure({
-    .x = event->x,
-    .y = event->y,
-    .width = event->width,
-    .height = event->height
-  });
+  surface->Configure({.x = event->x,
+                      .y = event->y,
+                      .width = event->width,
+                      .height = event->height});
 }
 
 void XSurface::OnRequestResize(XSurface* surface,

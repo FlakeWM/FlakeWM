@@ -44,6 +44,7 @@ endif()
 
 include(cmake/wlroots.cmake)
 
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Qml Quick)
 find_program(XWAYLAND_EXECUTABLE NAMES Xwayland REQUIRED)
 
 add_executable(flakewm-xwayland
@@ -59,6 +60,12 @@ set(flakewm_CXX_SOURCES
   src/core/compositor/compositor.cc
   src/core/compositor_private/compositor_private.cc
   src/protocol/layer_shell/layer_surface.cc
+  src/view/ssd/ssd/ssd.cc
+  src/view/ssd/ssd_buffer/ssd_buffer.cc
+  src/view/ssd/ssd_renderer/ssd_renderer.cc
+  src/view/ssd/ssd_shadow/ssd_shadow.cc
+  src/view/ssd/ssd_surface_clip/ssd_surface_clip.cc
+  src/view/ssd/window_icon_provider/window_icon_provider.cc
   src/xwayland/xsurface/xsurface.cc
   src/xwayland/xwayland_manager/xwayland_manager.cc
   src/utils/args_handler/args_handler.cc
@@ -76,6 +83,12 @@ add_executable(flakewm
   src/core/compositor/compositor.h
   src/core/compositor_private/compositor_private.h
   src/protocol/layer_shell/layer_surface.h
+  src/view/ssd/ssd/ssd.h
+  src/view/ssd/ssd_buffer/ssd_buffer.h
+  src/view/ssd/ssd_renderer/ssd_renderer.h
+  src/view/ssd/ssd_shadow/ssd_shadow.h
+  src/view/ssd/ssd_surface_clip/ssd_surface_clip.h
+  src/view/ssd/window_icon_provider/window_icon_provider.h
   src/xwayland/xsurface/xsurface.h
   src/xwayland/xwayland_manager/xwayland_manager.h
   src/utils/args_handler/args_handler.h
@@ -84,11 +97,32 @@ add_executable(flakewm
   src/utils/signal_listener.h
 )
 
+qt_add_resources(flakewm "ssd_qml"
+  PREFIX "/flakewm"
+  BASE src/view/ssd
+  FILES
+    src/view/ssd/ssd.qml
+    src/view/ssd/icons/close_hover.svg
+    src/view/ssd/icons/close_normal.svg
+    src/view/ssd/icons/close_press.svg
+    src/view/ssd/icons/maximize_hover.svg
+    src/view/ssd/icons/maximize_normal.svg
+    src/view/ssd/icons/maximize_press.svg
+    src/view/ssd/icons/minimize_hover.svg
+    src/view/ssd/icons/minimize_normal.svg
+    src/view/ssd/icons/minimize_press.svg
+    src/view/ssd/icons/unmaximize_hover.svg
+    src/view/ssd/icons/unmaximize_normal.svg
+    src/view/ssd/icons/unmaximize_press.svg
+)
+
 add_dependencies(flakewm flakewm-xwayland)
 
 target_link_libraries(flakewm
   PRIVATE
     Wlroots::wlroots
+    Qt6::Qml
+    Qt6::Quick
     absl::log
     absl::log_initialize
 )

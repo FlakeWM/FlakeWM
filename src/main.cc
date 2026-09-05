@@ -21,6 +21,10 @@
 
 #include <absl/log/absl_log.h>
 
+#include <QByteArray>
+#include <QGuiApplication>
+#include <QQuickWindow>
+#include <QSGRendererInterface>
 #include <csignal>
 #include <cstdlib>
 #include <exception>
@@ -51,6 +55,22 @@ int main(int argc, char* argv[]) {
 
     flakewm::utils::SetLoggingLevel(startup_args.info_level);
     ABSL_LOG(INFO) << "Starting FlakeWM v" << FLAKEWM_VERSION << '.';
+
+    // Qt Quick Offscreen is introduced here to draw the titlebar.
+    ABSL_LOG(INFO) << "Initializing Qt Quick for SSD titlebar.";
+    const QByteArray previous_platform = qgetenv("QT_QPA_PLATFORM");
+    qputenv("QT_QPA_PLATFORM", "offscreen");
+    qputenv("QT_QUICK_BACKEND", "software");
+    QQuickWindow::setSceneGraphBackend("software");
+    QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);
+    int qt_argc = 1;
+    char* qt_argv[] = {argv[0], nullptr};
+    QGuiApplication qt_application(qt_argc, qt_argv);
+    if (previous_platform.isNull()) {
+      qunsetenv("QT_QPA_PLATFORM");
+    } else {
+      qputenv("QT_QPA_PLATFORM", previous_platform);
+    }
 
     // Start the compositor core, then enter the Wayland event loop.
     flakewm::core::Compositor compositor;
