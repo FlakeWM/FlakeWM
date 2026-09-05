@@ -28,6 +28,7 @@
 #include <string>
 #include <vector>
 
+#include "src/backend/backend/backend.h"
 #include "src/protocol/layer_shell/layer_surface.h"
 #include "src/utils/args_handler/args_handler.h"
 #include "src/utils/signal_listener.h"
@@ -271,6 +272,7 @@ class CompositorPrivate final {
   void Destroy();
 
   wl_display* display_ = nullptr;
+  std::unique_ptr<backend::Backend> backend_owner_;
   wlr_backend* backend_ = nullptr;
   wlr_renderer* renderer_ = nullptr;
   wlr_allocator* allocator_ = nullptr;

@@ -30,7 +30,12 @@
 extern "C" {
 #include <wayland-server-core.h>
 #include <wlr/backend.h>
+#include <wlr/backend/interface.h>
+#include <wlr/backend/libinput.h>
+#include <wlr/backend/multi.h>
+#include <wlr/backend/session.h>
 #include <wlr/interfaces/wlr_buffer.h>
+#include <wlr/interfaces/wlr_output.h>
 #include <wlr/render/allocator.h>
 #include <wlr/render/wlr_renderer.h>
 #include <wlr/types/wlr_compositor.h>
@@ -40,6 +45,7 @@ extern "C" {
 #include <wlr/types/wlr_input_device.h>
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_output.h>
+#include <wlr/types/wlr_output_layer.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_pointer.h>
 #include <wlr/types/wlr_presentation_time.h>

@@ -80,6 +80,14 @@ wlr_renderer* CreateRenderer(wlr_backend* backend) {
 
   ABSL_LOG(WARNING) << "Vulkan renderer unavailable, falling back to GLES2";
   setenv("WLR_RENDERER", "gles2", 1);
+  if (wlr_renderer* renderer = wlr_renderer_autocreate(backend);
+      renderer != nullptr) {
+    unsetenv("WLR_RENDERER");
+    return renderer;
+  }
+
+  ABSL_LOG(WARNING) << "GLES2 renderer unavailable, falling back to Pixman";
+  setenv("WLR_RENDERER", "pixman", 1);
   wlr_renderer* renderer = wlr_renderer_autocreate(backend);
   unsetenv("WLR_RENDERER");
   return renderer;
@@ -159,11 +167,12 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
   wl_display_set_default_max_buffer_size(display_, kMaximumClientBufferSize);
 
   // Pick a backend from the current environment.
-  backend_ =
-      wlr_backend_autocreate(wl_display_get_event_loop(display_), nullptr);
-  if (backend_ == nullptr) {
+  backend_owner_ =
+      backend::Backend::Create(wl_display_get_event_loop(display_));
+  if (backend_owner_ == nullptr) {
     return Fail("Failed to create Wlroots backend.");
   }
+  backend_ = backend_owner_->Handle();
 
   // Prepare renderer and allocator for output buffers.
   renderer_ = CreateRenderer(backend_);
@@ -2010,10 +2019,8 @@ void CompositorPrivate::Destroy() {
   }
 
   // Clear Wlroots display backends.
-  if (backend_ != nullptr) {
-    wlr_backend_destroy(backend_);
-    backend_ = nullptr;
-  }
+  backend_owner_.reset();
+  backend_ = nullptr;
 
   // Clear Wayland display.
   if (display_ != nullptr) {

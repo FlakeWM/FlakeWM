@@ -16,6 +16,7 @@ This window compositor relys on Qt Quick offscreen to render titlebars, please h
 ## Acknowledgement
 We refrenced the following projects when developing FlakeWM:
 * **GXDE Wayland Compositor**: https://github.com/GXDE-OS/gxde-wlcom
+* **Open Kylin Wayland Compositor**: https://github.com/openkylin/kylin-wayland-compositor
 * **LabWC**: https://github.com/labwc/labwc
 * **Wayfire**: https://github.com/wayfirewm/wayfire
 * **Noctalia Umbriel**: https://github.com/noctalia-dev/umbriel

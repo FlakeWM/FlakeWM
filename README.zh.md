@@ -18,6 +18,7 @@ FlakeWM是一个Wlroots系合成器，当前正在早期开发状态。
 ## 致谢
 本项目参考了以下项目：
 * **GXDE Wayland Compositor**: https://github.com/GXDE-OS/gxde-wlcom
+* **Open Kylin Wayland Compositor**: https://github.com/openkylin/kylin-wayland-compositor
 * **LabWC**: https://github.com/labwc/labwc
 * **Wayfire**: https://github.com/wayfirewm/wayfire
 * **Noctalia Umbriel**: https://github.com/noctalia-dev/umbriel

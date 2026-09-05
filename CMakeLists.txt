@@ -57,6 +57,9 @@ target_compile_definitions(flakewm-xwayland PRIVATE
 
 set(flakewm_CXX_SOURCES
   src/main.cc
+  src/backend/backend/backend.cc
+  src/backend/fbdev/fbdev_backend/fbdev_backend.cc
+  src/backend/fbdev/fbdev_output/fbdev_output.cc
   src/core/compositor/compositor.cc
   src/core/compositor_private/compositor_private.cc
   src/protocol/layer_shell/layer_surface.cc
@@ -80,6 +83,9 @@ add_executable(flakewm
   src/wlr_wrapper/scene.h
   src/wlr_wrapper/wlr_layer_shell.h
   src/wlr_wrapper/wlr_xwayland.h
+  src/backend/backend/backend.h
+  src/backend/fbdev/fbdev_backend/fbdev_backend.h
+  src/backend/fbdev/fbdev_output/fbdev_output.h
   src/core/compositor/compositor.h
   src/core/compositor_private/compositor_private.h
   src/protocol/layer_shell/layer_surface.h
