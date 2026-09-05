@@ -1,0 +1,3 @@
+[submodule "vendor/waylib"]
+	path = vendor/waylib
+	url = https://github.com/vioken/waylib.git
