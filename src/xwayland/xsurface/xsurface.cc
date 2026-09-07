@@ -84,6 +84,14 @@ bool XSurface::RequestedFullscreen() const {
   return handle != nullptr && handle->fullscreen;
 }
 
+const char* XSurface::Title() const {
+  return handle == nullptr ? nullptr : handle->title;
+}
+
+const char* XSurface::AppId() const {
+  return handle == nullptr ? nullptr : handle->class_;
+}
+
 wlr_surface* XSurface::Surface() const {
   return handle == nullptr ? nullptr : handle->surface;
 }
@@ -146,6 +154,12 @@ void XSurface::Restack() const {
   }
 }
 
+void XSurface::Close() const {
+  if (handle != nullptr) {
+    wlr_xwayland_surface_close(handle);
+  }
+}
+
 void XSurface::OnAssociate(XSurface* surface, void*) {
   if (surface->handle == nullptr || surface->handle->surface == nullptr ||
       surface->scene_tree != nullptr) {
@@ -171,6 +185,9 @@ void XSurface::OnAssociate(XSurface* surface, void*) {
 }
 
 void XSurface::Dissociate() {
+  if (mapped) {
+    Toplevel::OnUnmap(this, nullptr);
+  }
   map.Disconnect();
   unmap.Disconnect();
   commit.Disconnect();

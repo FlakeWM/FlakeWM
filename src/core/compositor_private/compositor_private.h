@@ -31,6 +31,7 @@
 #include "src/backend/backend/backend.h"
 #include "src/protocol/input_method/input_method_relay/input_method_relay.h"
 #include "src/protocol/layer_shell/layer_surface.h"
+#include "src/protocol/protocol_manager/protocol_manager.h"
 #include "src/utils/args_handler/args_handler.h"
 #include "src/utils/signal_listener.h"
 #include "src/view/ssd/ssd/ssd.h"
@@ -49,6 +50,7 @@ namespace core {
 
 class CompositorPrivate final {
   friend class LayerSurface;
+  friend class protocol::ProtocolManager;
   friend class xwayland::XSurface;
   friend class xwayland::XWaylandManager;
 
@@ -72,6 +74,7 @@ class CompositorPrivate final {
     bool CreateLayerTrees();
     wlr_scene_tree* LayerTree(uint32_t layer) const;
     void DestroyLayerTrees();
+    void ApplyDeferredMode();
 
     static void OnFrame(Output* output, void*);
     static void OnRequestState(Output* output,
@@ -82,6 +85,10 @@ class CompositorPrivate final {
     wlr_output* handle;
     wlr_scene_output* scene_output = nullptr;
     wlr_box usable_box = {};
+    bool in_frame = false;
+    bool has_deferred_mode = false;
+    int deferred_width = 0;
+    int deferred_height = 0;
     std::array<wlr_scene_tree*, 4> layer_trees = {};
     utils::SignalListener<Output, void> frame;
     utils::SignalListener<Output, wlr_output_event_request_state> request_state;
@@ -135,6 +142,8 @@ class CompositorPrivate final {
     virtual bool CanMaximize() const;
     virtual bool RequestedMaximized() const;
     virtual bool RequestedFullscreen() const;
+    virtual const char* Title() const;
+    virtual const char* AppId() const;
     virtual wlr_surface* Surface() const;
     virtual wlr_box Geometry() const;
     virtual void Configure(const wlr_box& box) const;
@@ -143,6 +152,7 @@ class CompositorPrivate final {
     virtual void SetMinimizedState(bool minimized) const;
     virtual void SetFullscreenState(bool fullscreen) const;
     virtual void Restack() const;
+    virtual void Close() const;
     wlr_box FrameGeometry() const;
     void UpdateCapabilities();
 
@@ -216,6 +226,7 @@ class CompositorPrivate final {
   Toplevel* ToplevelAt(double layout_x, double layout_y, wlr_surface** surface,
                        double* surface_x, double* surface_y) const;
   Toplevel* FindToplevel(wlr_xdg_toplevel* handle) const;
+  Toplevel* ToplevelForSurface(wlr_surface* surface) const;
   void AttachSsd(Toplevel* toplevel);
   view::Ssd::HitTarget SsdHitAt(const Toplevel* toplevel) const;
   void FocusToplevel(Toplevel* toplevel);
@@ -288,6 +299,7 @@ class CompositorPrivate final {
   wlr_layer_shell_v1* layer_shell_ = nullptr;
   wlr_virtual_keyboard_manager_v1* virtual_keyboard_manager_ = nullptr;
   std::unique_ptr<protocol::InputMethodRelay> input_method_relay_;
+  std::unique_ptr<protocol::ProtocolManager> protocol_manager_;
   std::unique_ptr<xwayland::XWaylandManager> xwayland_;
   wlr_seat* seat_ = nullptr;
   wlr_cursor* cursor_ = nullptr;

@@ -190,7 +190,7 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
   }
 
   // Publish basic globals required by regular Wayland clients.
-  compositor_ = wlr_compositor_create(display_, 5, renderer_);
+  compositor_ = wlr_compositor_create(display_, 6, renderer_);
   if (compositor_ == nullptr) {
     return Fail("Failed to create wl_compositor global");
   }
@@ -288,6 +288,15 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
     ABSL_LOG(WARNING) << "Failed to load the default cursor theme";
   }
   wlr_cursor_set_xcursor(cursor_, cursor_manager_, "default");
+
+  // Publish those extended protocols ONLY after seat & cursor O.K.
+  protocol_manager_ = std::make_unique<protocol::ProtocolManager>(this);
+  if (!protocol_manager_->Create(
+          display_, backend_, seat_, cursor_,
+          shell_layer_trees_[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY],
+          output_layout_)) {
+    return Fail("Failed to create desktop protocol globals!");
+  }
 
   // Connect global object and input event listeners.
   new_output_.Connect(&backend_->events.new_output);
@@ -429,17 +438,65 @@ void CompositorPrivate::Output::DestroyLayerTrees() {
   }
 }
 
+void CompositorPrivate::Output::ApplyDeferredMode() {
+  if (!has_deferred_mode || handle == nullptr) {
+    return;
+  }
+
+  has_deferred_mode = false;
+  wlr_output_state state = {};
+  wlr_output_state_init(&state);
+  wlr_output_state_set_custom_mode(&state, deferred_width, deferred_height, 0);
+  const bool committed = wlr_output_commit_state(handle, &state);
+  wlr_output_state_finish(&state);
+  if (!committed) {
+    ABSL_LOG(ERROR) << "Failed to apply deferred output mode";
+    return;
+  }
+  compositor->ArrangeLayers(this);
+  compositor->UpdateQtFrameInterval();
+}
+
 void CompositorPrivate::Output::OnFrame(Output* output, void*) {
   // Commit the scene for this output when a new frame is requested.
   if (output->scene_output == nullptr) {
     return;
   }
-  if (!wlr_scene_output_commit(output->scene_output, nullptr)) {
+
+  Toplevel* focused = output->compositor->ToplevelForSurface(
+      output->compositor->seat_->keyboard_state.focused_surface);
+  const bool tearing =
+      focused != nullptr && focused->RequestedFullscreen() &&
+      output->compositor->protocol_manager_ != nullptr &&
+      output->compositor->protocol_manager_->WantsTearing(focused->Surface());
+  bool committed = true;
+  output->in_frame = true;
+  if (!tearing) {
+    committed = wlr_scene_output_commit(output->scene_output, nullptr);
+  } else if (wlr_scene_output_needs_frame(output->scene_output)) {
+    wlr_output_state state = {};
+    wlr_output_state_init(&state);
+    if (wlr_scene_output_build_state(output->scene_output, &state, nullptr)) {
+      const bool has_buffer = (state.committed & WLR_OUTPUT_STATE_BUFFER) != 0;
+      state.tearing_page_flip = has_buffer;
+      if (state.tearing_page_flip &&
+          !wlr_output_test_state(output->handle, &state)) {
+        state.tearing_page_flip = false;
+      }
+      committed = wlr_output_commit_state(output->handle, &state);
+    } else {
+      committed = false;
+    }
+    wlr_output_state_finish(&state);
+  }
+  output->in_frame = false;
+  output->ApplyDeferredMode();
+  if (!committed) {
     ABSL_LOG(ERROR) << "Failed to commit output frame";
-    return;
   }
 
-  // Tell clients when this frame was presented.
+  // A client waiting on wl_surface.frame must not stall after a rejected
+  // backend commit. The next damage will give the output another chance.
   timespec now = {};
   clock_gettime(CLOCK_MONOTONIC, &now);
   wlr_scene_output_send_frame_done(output->scene_output, &now);
@@ -448,6 +505,14 @@ void CompositorPrivate::Output::OnFrame(Output* output, void*) {
 void CompositorPrivate::Output::OnRequestState(
     Output* output, wlr_output_event_request_state* event) {
   // Backends may request their own output state changes.
+  if (output->in_frame &&
+      (event->state->committed & WLR_OUTPUT_STATE_MODE) != 0 &&
+      event->state->mode_type == WLR_OUTPUT_STATE_MODE_CUSTOM) {
+    output->deferred_width = event->state->custom_mode.width;
+    output->deferred_height = event->state->custom_mode.height;
+    output->has_deferred_mode = true;
+    return;
+  }
   if (output->handle != nullptr &&
       !wlr_output_commit_state(output->handle, event->state)) {
     ABSL_LOG(ERROR) << "Backend-requested output state was rejected";
@@ -511,6 +576,9 @@ void CompositorPrivate::Keyboard::OnKey(Keyboard* keyboard,
   // Forward key events from this keyboard to the focused client.
   if (keyboard->handle == nullptr) {
     return;
+  }
+  if (keyboard->compositor->protocol_manager_ != nullptr) {
+    keyboard->compositor->protocol_manager_->NotifyKeyboard(event->time_msec);
   }
   if (keyboard->compositor->input_method_relay_ != nullptr) {
     wlr_input_method_keyboard_grab_v2* grab =
@@ -618,6 +686,11 @@ bool CompositorPrivate::Toplevel::CanMaximize() const {
   if (handle == nullptr || handle->parent != nullptr) {
     return false;
   }
+  if (wlr_xdg_dialog_v1* dialog =
+          wlr_xdg_dialog_v1_try_from_wlr_xdg_toplevel(handle);
+      dialog != nullptr && dialog->modal) {
+    return false;
+  }
   const wlr_xdg_toplevel_state& state = handle->current;
   const bool fixed_width = state.min_width > 0 && state.max_width > 0 &&
                            state.min_width == state.max_width;
@@ -632,6 +705,14 @@ bool CompositorPrivate::Toplevel::RequestedMaximized() const {
 
 bool CompositorPrivate::Toplevel::RequestedFullscreen() const {
   return handle != nullptr && handle->requested.fullscreen;
+}
+
+const char* CompositorPrivate::Toplevel::Title() const {
+  return handle == nullptr ? nullptr : handle->title;
+}
+
+const char* CompositorPrivate::Toplevel::AppId() const {
+  return handle == nullptr ? nullptr : handle->app_id;
 }
 
 wlr_surface* CompositorPrivate::Toplevel::Surface() const {
@@ -678,6 +759,12 @@ void CompositorPrivate::Toplevel::SetFullscreenState(bool fullscreen) const {
 
 void CompositorPrivate::Toplevel::Restack() const {}
 
+void CompositorPrivate::Toplevel::Close() const {
+  if (handle != nullptr) {
+    wlr_xdg_toplevel_send_close(handle);
+  }
+}
+
 wlr_box CompositorPrivate::Toplevel::FrameGeometry() const {
   const wlr_box geometry = Geometry();
   return ssd == nullptr ? geometry : ssd->FrameGeometry(geometry);
@@ -710,6 +797,10 @@ void CompositorPrivate::Toplevel::OnMap(Toplevel* toplevel, void*) {
   // Honor the initial state request before focusing the new window.
   toplevel->mapped = true;
   wlr_scene_node_set_enabled(&toplevel->scene_tree->node, true);
+  if (toplevel->compositor->protocol_manager_ != nullptr) {
+    toplevel->compositor->protocol_manager_->MapToplevel(
+        toplevel->Surface(), toplevel->Title(), toplevel->AppId());
+  }
   if (toplevel->RequestedMaximized() && toplevel->CanManage()) {
     toplevel->compositor->SetMaximized(toplevel, true);
   }
@@ -725,6 +816,9 @@ void CompositorPrivate::Toplevel::OnUnmap(Toplevel* toplevel, void*) {
       toplevel->compositor->seat_->keyboard_state.focused_surface ==
           toplevel->Surface();
   toplevel->mapped = false;
+  if (toplevel->compositor->protocol_manager_ != nullptr) {
+    toplevel->compositor->protocol_manager_->UnmapToplevel(toplevel->Surface());
+  }
   if (toplevel->compositor->grabbed_toplevel_ == toplevel) {
     toplevel->compositor->ResetCursorMode();
   }
@@ -783,6 +877,10 @@ void CompositorPrivate::Toplevel::OnCommit(Toplevel* toplevel, void*) {
                                 toplevel->restore_box.y - frame.y);
     toplevel->restore_position_pending = false;
   }
+  if (toplevel->compositor->protocol_manager_ != nullptr) {
+    toplevel->compositor->protocol_manager_->UpdateToplevel(
+        toplevel->Surface());
+  }
 }
 
 void CompositorPrivate::Toplevel::OnRequestMaximize(Toplevel* toplevel, void*) {
@@ -803,6 +901,10 @@ void CompositorPrivate::Toplevel::OnRequestMinimize(Toplevel* toplevel, void*) {
 void CompositorPrivate::Toplevel::OnRequestFullscreen(Toplevel* toplevel,
                                                       void*) {
   toplevel->SetFullscreenState(toplevel->RequestedFullscreen());
+  if (toplevel->compositor->protocol_manager_ != nullptr) {
+    toplevel->compositor->protocol_manager_->UpdateToplevel(
+        toplevel->Surface());
+  }
 }
 
 void CompositorPrivate::Toplevel::OnRequestMove(Toplevel* toplevel, void*) {
@@ -823,6 +925,10 @@ void CompositorPrivate::Toplevel::OnSetTitle(Toplevel* toplevel, void*) {
                                 ? std::string{}
                                 : toplevel->handle->title);
   }
+  if (toplevel->compositor->protocol_manager_ != nullptr) {
+    toplevel->compositor->protocol_manager_->UpdateToplevel(
+        toplevel->Surface());
+  }
 }
 
 void CompositorPrivate::Toplevel::OnSetAppId(Toplevel* toplevel, void*) {
@@ -830,6 +936,10 @@ void CompositorPrivate::Toplevel::OnSetAppId(Toplevel* toplevel, void*) {
     toplevel->ssd->SetAppId(toplevel->handle->app_id == nullptr
                                 ? std::string{}
                                 : toplevel->handle->app_id);
+  }
+  if (toplevel->compositor->protocol_manager_ != nullptr) {
+    toplevel->compositor->protocol_manager_->UpdateToplevel(
+        toplevel->Surface());
   }
 }
 
@@ -840,6 +950,13 @@ void CompositorPrivate::Toplevel::OnSetParent(Toplevel* toplevel, void*) {
   }
   if (toplevel->maximized && !toplevel->CanMaximize()) {
     toplevel->compositor->SetMaximized(toplevel, false);
+  }
+  if (toplevel->compositor->protocol_manager_ != nullptr) {
+    wlr_surface* parent = toplevel->handle->parent == nullptr
+                              ? nullptr
+                              : toplevel->handle->parent->base->surface;
+    toplevel->compositor->protocol_manager_->UpdateToplevelParent(
+        toplevel->Surface(), parent);
   }
 }
 
@@ -945,6 +1062,9 @@ void CompositorPrivate::AddKeyboard(wlr_input_device* device) {
 
 void CompositorPrivate::OnNewInput(CompositorPrivate* compositor,
                                    wlr_input_device* device) {
+  if (compositor->protocol_manager_ != nullptr) {
+    compositor->protocol_manager_->AddInput(device);
+  }
   // Attach supported devices to the shared seat and cursor.
   switch (device->type) {
     case WLR_INPUT_DEVICE_KEYBOARD:
@@ -1000,6 +1120,21 @@ CompositorPrivate::Toplevel* CompositorPrivate::FindToplevel(
     wlr_xdg_toplevel* handle) const {
   for (const std::unique_ptr<Toplevel>& toplevel : toplevels_) {
     if (toplevel->handle == handle) {
+      return toplevel.get();
+    }
+  }
+  return nullptr;
+}
+
+CompositorPrivate::Toplevel* CompositorPrivate::ToplevelForSurface(
+    wlr_surface* surface) const {
+  if (surface == nullptr) {
+    return nullptr;
+  }
+  wlr_surface* root = wlr_surface_get_root_surface(surface);
+  for (const std::unique_ptr<Toplevel>& toplevel : toplevels_) {
+    if (toplevel->Surface() != nullptr &&
+        wlr_surface_get_root_surface(toplevel->Surface()) == root) {
       return toplevel.get();
     }
   }
@@ -1077,6 +1212,10 @@ void CompositorPrivate::FocusToplevel(Toplevel* toplevel) {
   wlr_surface* surface = toplevel->Surface();
   wlr_surface* previous_surface = seat_->keyboard_state.focused_surface;
   if (previous_surface == surface) {
+    if (protocol_manager_ != nullptr) {
+      protocol_manager_->UpdateKeyboardFocus(surface);
+      protocol_manager_->UpdateToplevel(surface);
+    }
     return;
   }
   // Deactivate the previously focused XDG toplevel.
@@ -1103,6 +1242,11 @@ void CompositorPrivate::FocusToplevel(Toplevel* toplevel) {
     wlr_seat_keyboard_notify_enter(seat_, surface, keyboard->keycodes,
                                    keyboard->num_keycodes,
                                    &keyboard->modifiers);
+  }
+  if (protocol_manager_ != nullptr) {
+    protocol_manager_->UpdateKeyboardFocus(surface);
+    protocol_manager_->UpdateToplevel(previous_surface);
+    protocol_manager_->UpdateToplevel(surface);
   }
 }
 
@@ -1131,6 +1275,9 @@ void CompositorPrivate::FocusNextToplevel(Toplevel* excluding) {
   }
   // No usable window remains.
   wlr_seat_keyboard_clear_focus(seat_);
+  if (protocol_manager_ != nullptr) {
+    protocol_manager_->UpdateKeyboardFocus(nullptr);
+  }
 }
 
 void CompositorPrivate::FocusLayerSurface(LayerSurface* layer_surface) {
@@ -1171,6 +1318,10 @@ void CompositorPrivate::FocusLayerSurface(LayerSurface* layer_surface) {
     wlr_seat_keyboard_notify_enter(seat_, surface, keyboard->keycodes,
                                    keyboard->num_keycodes,
                                    &keyboard->modifiers);
+  }
+  if (protocol_manager_ != nullptr) {
+    protocol_manager_->UpdateKeyboardFocus(surface);
+    protocol_manager_->UpdateToplevel(previous_surface);
   }
 }
 
@@ -1342,6 +1493,9 @@ void CompositorPrivate::SetMaximized(Toplevel* toplevel, bool maximized) {
     toplevel->maximized_output = nullptr;
   }
   toplevel->SetMaximizedState(maximized);
+  if (protocol_manager_ != nullptr) {
+    protocol_manager_->UpdateToplevel(toplevel->Surface());
+  }
 }
 
 void CompositorPrivate::ToggleMaximized(Toplevel* toplevel) {
@@ -1365,6 +1519,9 @@ void CompositorPrivate::Minimize(Toplevel* toplevel) {
     FocusNextToplevel(toplevel);
   }
   wlr_seat_pointer_clear_focus(seat_);
+  if (protocol_manager_ != nullptr) {
+    protocol_manager_->UpdateToplevel(toplevel->Surface());
+  }
 }
 
 void CompositorPrivate::RestoreForMove(Toplevel* toplevel) {
@@ -1562,21 +1719,47 @@ void CompositorPrivate::ProcessCursorMotion(uint32_t time_msec) {
 void CompositorPrivate::OnCursorMotion(CompositorPrivate* compositor,
                                        wlr_pointer_motion_event* event) {
   // Relative pointer devices report deltas.
-  wlr_cursor_move(compositor->cursor_, &event->pointer->base, event->delta_x,
-                  event->delta_y);
+  double delta_x = event->delta_x;
+  double delta_y = event->delta_y;
+  if (compositor->protocol_manager_ != nullptr) {
+    compositor->protocol_manager_->NotifyPointer(event->time_msec);
+    compositor->protocol_manager_->ConfinePointer(&delta_x, &delta_y);
+  }
+  wlr_cursor_move(compositor->cursor_, &event->pointer->base, delta_x, delta_y);
+  if (compositor->protocol_manager_ != nullptr) {
+    compositor->protocol_manager_->MoveDrag();
+  }
   compositor->ProcessCursorMotion(event->time_msec);
 }
 
 void CompositorPrivate::OnCursorMotionAbsolute(
     CompositorPrivate* compositor, wlr_pointer_motion_absolute_event* event) {
   // Absolute devices report normalized output coordinates.
-  wlr_cursor_warp_absolute(compositor->cursor_, &event->pointer->base, event->x,
-                           event->y);
+  double layout_x = 0;
+  double layout_y = 0;
+  wlr_cursor_absolute_to_layout_coords(compositor->cursor_,
+                                       &event->pointer->base, event->x,
+                                       event->y, &layout_x, &layout_y);
+  double delta_x = layout_x - compositor->cursor_->x;
+  double delta_y = layout_y - compositor->cursor_->y;
+  if (compositor->protocol_manager_ != nullptr) {
+    compositor->protocol_manager_->NotifyPointer(event->time_msec);
+    compositor->protocol_manager_->ConfinePointer(&delta_x, &delta_y);
+  }
+  wlr_cursor_warp_closest(compositor->cursor_, &event->pointer->base,
+                          compositor->cursor_->x + delta_x,
+                          compositor->cursor_->y + delta_y);
+  if (compositor->protocol_manager_ != nullptr) {
+    compositor->protocol_manager_->MoveDrag();
+  }
   compositor->ProcessCursorMotion(event->time_msec);
 }
 
 void CompositorPrivate::OnCursorButton(CompositorPrivate* compositor,
                                        wlr_pointer_button_event* event) {
+  if (compositor->protocol_manager_ != nullptr) {
+    compositor->protocol_manager_->NotifyPointer(event->time_msec);
+  }
   // WLR mouse release event.
   if (event->state == WL_POINTER_BUTTON_STATE_RELEASED) {
     for (const std::unique_ptr<Toplevel>& toplevel : compositor->toplevels_) {
@@ -1708,6 +1891,9 @@ void CompositorPrivate::OnCursorButton(CompositorPrivate* compositor,
 
 void CompositorPrivate::OnCursorAxis(CompositorPrivate* compositor,
                                      wlr_pointer_axis_event* event) {
+  if (compositor->protocol_manager_ != nullptr) {
+    compositor->protocol_manager_->NotifyPointer(event->time_msec);
+  }
   // Forward wheel and touchpad axis events without changing their source.
   wlr_seat_pointer_notify_axis(
       compositor->seat_, event->time_msec, event->orientation, event->delta,
@@ -1735,6 +1921,9 @@ void CompositorPrivate::OnPointerFocusChange(
   if (event->new_surface == nullptr) {
     wlr_cursor_set_xcursor(compositor->cursor_, compositor->cursor_manager_,
                            "default");
+  }
+  if (compositor->protocol_manager_ != nullptr) {
+    compositor->protocol_manager_->UpdatePointerFocus(event->new_surface);
   }
 }
 
@@ -1807,6 +1996,9 @@ void CompositorPrivate::OnNewOutput(CompositorPrivate* compositor,
   compositor->outputs_.push_back(std::move(state));
   compositor->UpdateQtFrameInterval();
   compositor->ArrangeLayers(output_wrapper);
+  if (compositor->protocol_manager_ != nullptr) {
+    compositor->protocol_manager_->AddOutput(output);
+  }
 }
 
 void CompositorPrivate::OnNewToplevel(CompositorPrivate* compositor,
@@ -2036,6 +2228,7 @@ void CompositorPrivate::Destroy() {
   if (display_ != nullptr) {
     wl_display_destroy_clients(display_);
   }
+  protocol_manager_.reset();
   input_method_relay_.reset();
 
   // Clear scene nodes.

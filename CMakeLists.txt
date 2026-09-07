@@ -75,6 +75,16 @@ flakewm_generate_server_protocol(
   "${CMAKE_CURRENT_SOURCE_DIR}/libs/waylib/src/server/protocols/private/text-input-unstable-v2.xml"
   text-input-unstable-v2
 )
+flakewm_generate_server_protocol(
+  FLAKEWM_INPUT_TIMESTAMPS_V1_PROTOCOL
+  "${WAYLAND_PROTOCOLS_DATA_DIR}/unstable/input-timestamps/input-timestamps-unstable-v1.xml"
+  input-timestamps-unstable-v1
+)
+flakewm_generate_server_protocol(
+  FLAKEWM_XDG_TOPLEVEL_DRAG_V1_PROTOCOL
+  "${WAYLAND_PROTOCOLS_DATA_DIR}/staging/xdg-toplevel-drag/xdg-toplevel-drag-v1.xml"
+  xdg-toplevel-drag-v1
+)
 
 add_executable(flakewm-xwayland
   src/xwayland/server/server.cc
@@ -91,15 +101,20 @@ set(flakewm_CXX_SOURCES
   src/backend/fbdev/fbdev_output/fbdev_output.cc
   src/core/compositor/compositor.cc
   src/core/compositor_private/compositor_private.cc
+  src/protocol/foreign_toplevel/foreign_toplevel/foreign_toplevel.cc
   src/protocol/input_method/input_method_popup/input_method_popup.cc
   src/protocol/input_method/input_method_relay/input_method_relay.cc
   src/protocol/layer_shell/layer_surface.cc
+  src/protocol/input_timestamps/input_timestamps_manager/input_timestamps_manager.cc
+  src/protocol/protocol_manager/protocol_manager.cc
   src/protocol/text_input/text_input/text_input.cc
   src/protocol/text_input/text_input_v1/text_input_v1.cc
   src/protocol/text_input/text_input_v1_manager/text_input_v1_manager.cc
   src/protocol/text_input/text_input_v2/text_input_v2.cc
   src/protocol/text_input/text_input_v2_manager/text_input_v2_manager.cc
   src/protocol/text_input/text_input_v3/text_input_v3.cc
+  src/protocol/toplevel_drag/toplevel_drag/toplevel_drag.cc
+  src/protocol/toplevel_drag/toplevel_drag_manager/toplevel_drag_manager.cc
   src/view/ssd/ssd/ssd.cc
   src/view/ssd/ssd_buffer/ssd_buffer.cc
   src/view/ssd/ssd_renderer/ssd_renderer.cc
@@ -117,6 +132,8 @@ add_executable(flakewm
   ${flakewm_CXX_SOURCES}
   ${FLAKEWM_TEXT_INPUT_V1_PROTOCOL}
   ${FLAKEWM_TEXT_INPUT_V2_PROTOCOL}
+  ${FLAKEWM_INPUT_TIMESTAMPS_V1_PROTOCOL}
+  ${FLAKEWM_XDG_TOPLEVEL_DRAG_V1_PROTOCOL}
   src/wlr_wrapper/wlroots.h
   src/wlr_wrapper/color.h
   src/wlr_wrapper/scene.h
@@ -128,15 +145,20 @@ add_executable(flakewm
   src/backend/fbdev/fbdev_output/fbdev_output.h
   src/core/compositor/compositor.h
   src/core/compositor_private/compositor_private.h
+  src/protocol/foreign_toplevel/foreign_toplevel/foreign_toplevel.h
   src/protocol/input_method/input_method_popup/input_method_popup.h
   src/protocol/input_method/input_method_relay/input_method_relay.h
   src/protocol/layer_shell/layer_surface.h
+  src/protocol/input_timestamps/input_timestamps_manager/input_timestamps_manager.h
+  src/protocol/protocol_manager/protocol_manager.h
   src/protocol/text_input/text_input/text_input.h
   src/protocol/text_input/text_input_v1/text_input_v1.h
   src/protocol/text_input/text_input_v1_manager/text_input_v1_manager.h
   src/protocol/text_input/text_input_v2/text_input_v2.h
   src/protocol/text_input/text_input_v2_manager/text_input_v2_manager.h
   src/protocol/text_input/text_input_v3/text_input_v3.h
+  src/protocol/toplevel_drag/toplevel_drag/toplevel_drag.h
+  src/protocol/toplevel_drag/toplevel_drag_manager/toplevel_drag_manager.h
   src/view/ssd/ssd/ssd.h
   src/view/ssd/ssd_buffer/ssd_buffer.h
   src/view/ssd/ssd_renderer/ssd_renderer.h

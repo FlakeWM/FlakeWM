@@ -44,6 +44,8 @@ class XSurface final : public core::CompositorPrivate::Toplevel {
   bool CanMaximize() const override;
   bool RequestedMaximized() const override;
   bool RequestedFullscreen() const override;
+  const char* Title() const override;
+  const char* AppId() const override;
   wlr_surface* Surface() const override;
   wlr_box Geometry() const override;
   void Configure(const wlr_box& box) const override;
@@ -52,6 +54,7 @@ class XSurface final : public core::CompositorPrivate::Toplevel {
   void SetMinimizedState(bool minimized) const override;
   void SetFullscreenState(bool fullscreen) const override;
   void Restack() const override;
+  void Close() const override;
 
   static void OnAssociate(XSurface* surface, void*);
   static void OnDissociate(XSurface* surface, void*);
