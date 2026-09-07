@@ -1,6 +1,8 @@
 # FlakeWM
 FlakeWM是一个Wlroots系合成器，当前正在早期开发状态。
 
+有关协议支持情况，请查阅[doc/protocols/protocols.zh.md](./doc/protocols/protocols.zh.md)。
+
 ## 依赖
 > 关于集成的第三方库的版本记录，请移步[libs/README.zh.md](./libs/README.zh.md).
 

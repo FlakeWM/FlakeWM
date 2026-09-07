@@ -1,6 +1,8 @@
 # FlakeWM
 FlakeWM is a Wlroots based Wayland compositor. Currently, it's under early development stage.
 
+For the detialed list of protocols supported, please refer to [doc/protocols/protocols.md](./doc/protocols/protocols.md).
+
 ## Dependencies
 > Please refer to [libs/README.md](./libs/README.md) for the version and licensing info of those vendored third-party libraries.
 
