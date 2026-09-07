@@ -24,7 +24,7 @@
 
 #include <new>
 
-#include "src/protocol/input_timestamps/input_timestamps_manager/input_timestamps_manager.h"
+#include "src/protocol/input_timestamps/input_timestamps_manager.h"
 
 namespace flakewm {
 namespace protocol {

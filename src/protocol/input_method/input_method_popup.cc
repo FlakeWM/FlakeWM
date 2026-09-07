@@ -22,8 +22,8 @@
  * Original code is modified to adapt C++ and Wlroots 0.20.2.
  */
 
-#include "src/protocol/input_method/input_method_popup/input_method_popup.h"
-#include "src/protocol/input_method/input_method_relay/input_method_relay.h"
+#include "src/protocol/input_method/input_method_popup.h"
+#include "src/protocol/input_method/input_method_relay.h"
 
 namespace flakewm {
 namespace protocol {

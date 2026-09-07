@@ -22,7 +22,7 @@
  * Original code is modified to adapt C++ and Wlroots 0.20.2.
  */
 
-#include "src/protocol/foreign_toplevel/foreign_toplevel/foreign_toplevel.h"
+#include "src/protocol/foreign_toplevel/foreign_toplevel.h"
 #include "src/protocol/protocol_manager/protocol_manager.h"
 
 namespace flakewm {

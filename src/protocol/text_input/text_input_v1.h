@@ -29,7 +29,7 @@
 #include <string>
 #include <string_view>
 
-#include "src/protocol/text_input/text_input/text_input.h"
+#include "src/protocol/text_input/text_input.h"
 #include "src/utils/signal_listener.h"
 
 struct zwp_text_input_v1_interface;

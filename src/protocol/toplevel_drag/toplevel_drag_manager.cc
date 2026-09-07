@@ -24,7 +24,7 @@
 
 #include <new>
 
-#include "src/protocol/toplevel_drag/toplevel_drag_manager/toplevel_drag_manager.h"
+#include "src/protocol/toplevel_drag/toplevel_drag_manager.h"
 
 namespace flakewm {
 namespace protocol {

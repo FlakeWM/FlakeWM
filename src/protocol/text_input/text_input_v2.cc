@@ -24,7 +24,7 @@
 
 #include <string>
 
-#include "src/protocol/text_input/text_input_v2/text_input_v2.h"
+#include "src/protocol/text_input/text_input_v2.h"
 
 extern "C" {
 #include "protocol/text-input-unstable-v2-protocol.h"

@@ -22,8 +22,8 @@
  * Original code is modified to adapt C++ and Wlroots 0.20.2.
  */
 
-#include "src/protocol/toplevel_drag/toplevel_drag/toplevel_drag.h"
-#include "src/protocol/toplevel_drag/toplevel_drag_manager/toplevel_drag_manager.h"
+#include "src/protocol/toplevel_drag/toplevel_drag.h"
+#include "src/protocol/toplevel_drag/toplevel_drag_manager.h"
 
 namespace flakewm {
 namespace protocol {

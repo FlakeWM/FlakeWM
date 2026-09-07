@@ -29,7 +29,7 @@
 #include <vector>
 
 #include "src/backend/backend/backend.h"
-#include "src/protocol/input_method/input_method_relay/input_method_relay.h"
+#include "src/protocol/input_method/input_method_relay.h"
 #include "src/protocol/layer_shell/layer_surface.h"
 #include "src/protocol/protocol_manager/protocol_manager.h"
 #include "src/utils/args_handler/args_handler.h"

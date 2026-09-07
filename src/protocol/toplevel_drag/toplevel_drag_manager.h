@@ -29,7 +29,7 @@
 #include <memory>
 
 #include "protocol/xdg-toplevel-drag-v1-protocol.h"
-#include "src/protocol/toplevel_drag/toplevel_drag/toplevel_drag.h"
+#include "src/protocol/toplevel_drag/toplevel_drag.h"
 
 namespace flakewm {
 namespace protocol {

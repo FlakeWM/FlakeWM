@@ -101,20 +101,20 @@ set(flakewm_CXX_SOURCES
   src/backend/fbdev/fbdev_output/fbdev_output.cc
   src/core/compositor/compositor.cc
   src/core/compositor_private/compositor_private.cc
-  src/protocol/foreign_toplevel/foreign_toplevel/foreign_toplevel.cc
-  src/protocol/input_method/input_method_popup/input_method_popup.cc
-  src/protocol/input_method/input_method_relay/input_method_relay.cc
+  src/protocol/foreign_toplevel/foreign_toplevel.cc
+  src/protocol/input_method/input_method_popup.cc
+  src/protocol/input_method/input_method_relay.cc
   src/protocol/layer_shell/layer_surface.cc
-  src/protocol/input_timestamps/input_timestamps_manager/input_timestamps_manager.cc
+  src/protocol/input_timestamps/input_timestamps_manager.cc
   src/protocol/protocol_manager/protocol_manager.cc
-  src/protocol/text_input/text_input/text_input.cc
-  src/protocol/text_input/text_input_v1/text_input_v1.cc
-  src/protocol/text_input/text_input_v1_manager/text_input_v1_manager.cc
-  src/protocol/text_input/text_input_v2/text_input_v2.cc
-  src/protocol/text_input/text_input_v2_manager/text_input_v2_manager.cc
-  src/protocol/text_input/text_input_v3/text_input_v3.cc
-  src/protocol/toplevel_drag/toplevel_drag/toplevel_drag.cc
-  src/protocol/toplevel_drag/toplevel_drag_manager/toplevel_drag_manager.cc
+  src/protocol/text_input/text_input.cc
+  src/protocol/text_input/text_input_v1.cc
+  src/protocol/text_input/text_input_v1_manager.cc
+  src/protocol/text_input/text_input_v2.cc
+  src/protocol/text_input/text_input_v2_manager.cc
+  src/protocol/text_input/text_input_v3.cc
+  src/protocol/toplevel_drag/toplevel_drag.cc
+  src/protocol/toplevel_drag/toplevel_drag_manager.cc
   src/view/ssd/ssd/ssd.cc
   src/view/ssd/ssd_buffer/ssd_buffer.cc
   src/view/ssd/ssd_renderer/ssd_renderer.cc
@@ -145,20 +145,20 @@ add_executable(flakewm
   src/backend/fbdev/fbdev_output/fbdev_output.h
   src/core/compositor/compositor.h
   src/core/compositor_private/compositor_private.h
-  src/protocol/foreign_toplevel/foreign_toplevel/foreign_toplevel.h
-  src/protocol/input_method/input_method_popup/input_method_popup.h
-  src/protocol/input_method/input_method_relay/input_method_relay.h
+  src/protocol/foreign_toplevel/foreign_toplevel.h
+  src/protocol/input_method/input_method_popup.h
+  src/protocol/input_method/input_method_relay.h
   src/protocol/layer_shell/layer_surface.h
-  src/protocol/input_timestamps/input_timestamps_manager/input_timestamps_manager.h
+  src/protocol/input_timestamps/input_timestamps_manager.h
   src/protocol/protocol_manager/protocol_manager.h
-  src/protocol/text_input/text_input/text_input.h
-  src/protocol/text_input/text_input_v1/text_input_v1.h
-  src/protocol/text_input/text_input_v1_manager/text_input_v1_manager.h
-  src/protocol/text_input/text_input_v2/text_input_v2.h
-  src/protocol/text_input/text_input_v2_manager/text_input_v2_manager.h
-  src/protocol/text_input/text_input_v3/text_input_v3.h
-  src/protocol/toplevel_drag/toplevel_drag/toplevel_drag.h
-  src/protocol/toplevel_drag/toplevel_drag_manager/toplevel_drag_manager.h
+  src/protocol/text_input/text_input.h
+  src/protocol/text_input/text_input_v1.h
+  src/protocol/text_input/text_input_v1_manager.h
+  src/protocol/text_input/text_input_v2.h
+  src/protocol/text_input/text_input_v2_manager.h
+  src/protocol/text_input/text_input_v3.h
+  src/protocol/toplevel_drag/toplevel_drag.h
+  src/protocol/toplevel_drag/toplevel_drag_manager.h
   src/view/ssd/ssd/ssd.h
   src/view/ssd/ssd_buffer/ssd_buffer.h
   src/view/ssd/ssd_renderer/ssd_renderer.h

@@ -27,12 +27,12 @@
 #include <string>
 #include <utility>
 
-#include "src/protocol/input_method/input_method_popup/input_method_popup.h"
-#include "src/protocol/text_input/text_input/text_input.h"
-#include "src/protocol/text_input/text_input_v1_manager/text_input_v1_manager.h"
-#include "src/protocol/text_input/text_input_v2_manager/text_input_v2_manager.h"
-#include "src/protocol/text_input/text_input_v3/text_input_v3.h"
-#include "src/protocol/input_method/input_method_relay/input_method_relay.h"
+#include "src/protocol/input_method/input_method_popup.h"
+#include "src/protocol/text_input/text_input.h"
+#include "src/protocol/text_input/text_input_v1_manager.h"
+#include "src/protocol/text_input/text_input_v2_manager.h"
+#include "src/protocol/text_input/text_input_v3.h"
+#include "src/protocol/input_method/input_method_relay.h"
 
 namespace flakewm {
 namespace protocol {

@@ -29,9 +29,9 @@
 #include <unordered_map>
 #include <vector>
 
-#include "src/protocol/foreign_toplevel/foreign_toplevel/foreign_toplevel.h"
-#include "src/protocol/input_timestamps/input_timestamps_manager/input_timestamps_manager.h"
-#include "src/protocol/toplevel_drag/toplevel_drag_manager/toplevel_drag_manager.h"
+#include "src/protocol/foreign_toplevel/foreign_toplevel.h"
+#include "src/protocol/input_timestamps/input_timestamps_manager.h"
+#include "src/protocol/toplevel_drag/toplevel_drag_manager.h"
 #include "src/utils/signal_listener.h"
 #include "src/wlr_wrapper/wlr_layer_shell.h"
 #include "src/wlr_wrapper/wlroots.h"

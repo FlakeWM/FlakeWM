@@ -24,7 +24,7 @@
 
 #include <string>
 
-#include "src/protocol/text_input/text_input_v3/text_input_v3.h"
+#include "src/protocol/text_input/text_input_v3.h"
 
 namespace flakewm {
 namespace protocol {

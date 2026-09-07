@@ -28,7 +28,7 @@
 #include <cstdint>
 #include <string_view>
 
-#include "src/protocol/text_input/text_input/text_input.h"
+#include "src/protocol/text_input/text_input.h"
 #include "src/utils/signal_listener.h"
 
 namespace flakewm {
