@@ -62,6 +62,7 @@ class ProtocolManager final {
   void NotifyKeyboard(uint32_t time_msec);
   void NotifyPointer(uint32_t time_msec);
   bool WantsTearing(wlr_surface* surface) const;
+  bool ShortcutsInhibited() const;
   bool ConfinePointer(double* delta_x, double* delta_y) const;
   void UpdatePointerFocus(wlr_surface* surface);
   void UpdateKeyboardFocus(wlr_surface* surface);

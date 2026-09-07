@@ -29,6 +29,8 @@
 #include <vector>
 
 #include "src/backend/backend/backend.h"
+#include "src/input/key_binding_manager.h"
+#include "src/input/shortcut_settings_service.h"
 #include "src/protocol/input_method/input_method_relay.h"
 #include "src/protocol/layer_shell/layer_surface.h"
 #include "src/protocol/protocol_manager/protocol_manager.h"
@@ -231,6 +233,7 @@ class CompositorPrivate final {
   view::Ssd::HitTarget SsdHitAt(const Toplevel* toplevel) const;
   void FocusToplevel(Toplevel* toplevel);
   void FocusNextToplevel(Toplevel* excluding);
+  void CycleToplevel(bool reverse);
   void FocusLayerSurface(LayerSurface* layer_surface);
   LayerSurface* LayerSurfaceFor(wlr_surface* surface) const;
   Output* FindOutput(wlr_output* output) const;
@@ -280,6 +283,7 @@ class CompositorPrivate final {
 
   bool ConfigureBackendEnvironment(
       const utils::StartupArgs& startup_args) const;
+  bool RegisterDefaultKeyBindings();
   void UpdateQtFrameInterval();
   bool Spawn(const std::string& command) const;
   bool Fail(const char* message) const;
@@ -300,6 +304,8 @@ class CompositorPrivate final {
   wlr_virtual_keyboard_manager_v1* virtual_keyboard_manager_ = nullptr;
   std::unique_ptr<protocol::InputMethodRelay> input_method_relay_;
   std::unique_ptr<protocol::ProtocolManager> protocol_manager_;
+  std::unique_ptr<input::KeyBindingManager> key_binding_manager_;
+  std::unique_ptr<input::ShortcutSettingsService> shortcut_settings_service_;
   std::unique_ptr<xwayland::XWaylandManager> xwayland_;
   wlr_seat* seat_ = nullptr;
   wlr_cursor* cursor_ = nullptr;

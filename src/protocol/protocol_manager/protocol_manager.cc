@@ -22,6 +22,8 @@
  * Original code is modified to adapt C++ and Wlroots 0.20.2.
  */
 
+#include "src/protocol/protocol_manager/protocol_manager.h"
+
 #include <absl/log/absl_log.h>
 
 #include <cmath>
@@ -29,7 +31,6 @@
 #include <string>
 
 #include "src/core/compositor_private/compositor_private.h"
-#include "src/protocol/protocol_manager/protocol_manager.h"
 
 namespace flakewm {
 namespace protocol {
@@ -183,6 +184,19 @@ bool ProtocolManager::WantsTearing(wlr_surface* surface) const {
          wlr_tearing_control_manager_v1_surface_hint_from_surface(
              tearing_manager_, surface) ==
              WP_TEARING_CONTROL_V1_PRESENTATION_HINT_ASYNC;
+}
+
+bool ProtocolManager::ShortcutsInhibited() const {
+  if (shortcuts_manager_ == nullptr || seat_ == nullptr) {
+    return false;
+  }
+  wlr_keyboard_shortcuts_inhibitor_v1* inhibitor;
+  wl_list_for_each(inhibitor, &shortcuts_manager_->inhibitors, link) {
+    if (inhibitor->seat == seat_ && inhibitor->active) {
+      return true;
+    }
+  }
+  return false;
 }
 
 bool ProtocolManager::ConfinePointer(double* delta_x, double* delta_y) const {

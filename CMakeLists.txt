@@ -44,7 +44,7 @@ endif()
 
 include(cmake/wlroots.cmake)
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Qml Quick)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core DBus Gui Qml Quick)
 find_program(XWAYLAND_EXECUTABLE NAMES Xwayland REQUIRED)
 find_program(WAYLAND_SCANNER_EXECUTABLE NAMES wayland-scanner REQUIRED)
 pkg_get_variable(WAYLAND_PROTOCOLS_DATA_DIR wayland-protocols pkgdatadir)
@@ -101,6 +101,8 @@ set(flakewm_CXX_SOURCES
   src/backend/fbdev/fbdev_output/fbdev_output.cc
   src/core/compositor/compositor.cc
   src/core/compositor_private/compositor_private.cc
+  src/input/key_binding_manager.cc
+  src/input/shortcut_settings_service.cc
   src/protocol/foreign_toplevel/foreign_toplevel.cc
   src/protocol/input_method/input_method_popup.cc
   src/protocol/input_method/input_method_relay.cc
@@ -145,6 +147,8 @@ add_executable(flakewm
   src/backend/fbdev/fbdev_output/fbdev_output.h
   src/core/compositor/compositor.h
   src/core/compositor_private/compositor_private.h
+  src/input/key_binding_manager.h
+  src/input/shortcut_settings_service.h
   src/protocol/foreign_toplevel/foreign_toplevel.h
   src/protocol/input_method/input_method_popup.h
   src/protocol/input_method/input_method_relay.h
@@ -197,6 +201,7 @@ add_dependencies(flakewm flakewm-xwayland)
 target_link_libraries(flakewm
   PRIVATE
     Wlroots::wlroots
+    Qt6::DBus
     Qt6::Qml
     Qt6::Quick
     absl::log

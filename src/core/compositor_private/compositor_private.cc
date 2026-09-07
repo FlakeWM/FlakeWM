@@ -298,6 +298,15 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
     return Fail("Failed to create desktop protocol globals!");
   }
 
+  if (!RegisterDefaultKeyBindings()) {
+    return Fail("Failed to register default key bindings");
+  }
+  shortcut_settings_service_ = std::make_unique<input::ShortcutSettingsService>(
+      key_binding_manager_.get());
+  if (!shortcut_settings_service_->Start()) {
+    ABSL_LOG(WARNING) << "Shortcut settings D-Bus service is unavailable";
+  }
+
   // Connect global object and input event listeners.
   new_output_.Connect(&backend_->events.new_output);
   new_toplevel_.Connect(&xdg_shell_->events.new_toplevel);
@@ -580,6 +589,14 @@ void CompositorPrivate::Keyboard::OnKey(Keyboard* keyboard,
   if (keyboard->compositor->protocol_manager_ != nullptr) {
     keyboard->compositor->protocol_manager_->NotifyKeyboard(event->time_msec);
   }
+  const bool shortcuts_inhibited =
+      keyboard->compositor->protocol_manager_ != nullptr &&
+      keyboard->compositor->protocol_manager_->ShortcutsInhibited();
+  if (keyboard->compositor->key_binding_manager_ != nullptr &&
+      keyboard->compositor->key_binding_manager_->HandleKey(
+          keyboard->handle, *event, shortcuts_inhibited)) {
+    return;
+  }
   if (keyboard->compositor->input_method_relay_ != nullptr) {
     wlr_input_method_keyboard_grab_v2* grab =
         keyboard->compositor->input_method_relay_->GrabForKeyboard(
@@ -598,6 +615,10 @@ void CompositorPrivate::Keyboard::OnKey(Keyboard* keyboard,
 
 void CompositorPrivate::Keyboard::OnDestroy(Keyboard* keyboard, void*) {
   // Drop keyboard listeners and refresh seat capabilities.
+  if (keyboard->compositor->key_binding_manager_ != nullptr) {
+    keyboard->compositor->key_binding_manager_->ForgetKeyboard(
+        keyboard->handle);
+  }
   keyboard->modifiers.Disconnect();
   keyboard->key.Disconnect();
   keyboard->destroy.Disconnect();
@@ -1278,6 +1299,36 @@ void CompositorPrivate::FocusNextToplevel(Toplevel* excluding) {
   if (protocol_manager_ != nullptr) {
     protocol_manager_->UpdateKeyboardFocus(nullptr);
   }
+}
+
+void CompositorPrivate::CycleToplevel(bool reverse) {
+  std::vector<Toplevel*> candidates;
+  for (const std::unique_ptr<Toplevel>& candidate : toplevels_) {
+    if (candidate->mapped && !candidate->minimized && candidate->IsAlive() &&
+        candidate->WantsFocus()) {
+      candidates.push_back(candidate.get());
+    }
+  }
+  if (candidates.empty()) {
+    return;
+  }
+
+  Toplevel* focused = ToplevelForSurface(seat_->keyboard_state.focused_surface);
+  auto current = std::find(candidates.begin(), candidates.end(), focused);
+  if (current == candidates.end()) {
+    FocusToplevel(reverse ? candidates.front() : candidates.back());
+    return;
+  }
+  if (candidates.size() == 1) {
+    return;
+  }
+
+  const std::size_t index =
+      static_cast<std::size_t>(current - candidates.begin());
+  const std::size_t next =
+      reverse ? (index + 1) % candidates.size()
+              : (index + candidates.size() - 1) % candidates.size();
+  FocusToplevel(candidates[next]);
 }
 
 void CompositorPrivate::FocusLayerSurface(LayerSurface* layer_surface) {
@@ -2171,6 +2222,48 @@ bool CompositorPrivate::Spawn(const std::string& command) const {
   _exit(EX_UNAVAILABLE);
 }
 
+bool CompositorPrivate::RegisterDefaultKeyBindings() {
+  key_binding_manager_ = std::make_unique<input::KeyBindingManager>();
+  const auto register_binding =
+      [this](const char* shortcut, input::KeyBindingType type,
+             input::KeyBindingManager::Action action, const char* description) {
+        return key_binding_manager_
+            ->Register(shortcut, type, std::move(action), description)
+            .has_value();
+      };
+
+  return register_binding(
+             "Alt+Tab:no", input::KeyBindingType::kWindowSwitch,
+             [this]() { CycleToplevel(false); }, "Switch to next window") &&
+         register_binding(
+             "Alt+Shift+Tab:no", input::KeyBindingType::kWindowSwitch,
+             [this]() { CycleToplevel(true); }, "Switch to previous window") &&
+         register_binding(
+             "Alt+F4:no", input::KeyBindingType::kWindowClose,
+             [this]() {
+               if (Toplevel* toplevel = ToplevelForSurface(
+                       seat_->keyboard_state.focused_surface);
+                   toplevel != nullptr && toplevel->IsAlive()) {
+                 toplevel->Close();
+               }
+             },
+             "Close the active window") &&
+         register_binding(
+             "Alt+F9:no", input::KeyBindingType::kWindowMinimize,
+             [this]() {
+               Minimize(
+                   ToplevelForSurface(seat_->keyboard_state.focused_surface));
+             },
+             "Minimize the active window") &&
+         register_binding(
+             "Alt+F10:no", input::KeyBindingType::kWindowMaximize,
+             [this]() {
+               ToggleMaximized(
+                   ToplevelForSurface(seat_->keyboard_state.focused_surface));
+             },
+             "Toggle the active window maximized state");
+}
+
 bool CompositorPrivate::Fail(const char* message) const {
   // Startup helpers use one common failure path.
   ABSL_LOG(ERROR) << message;
@@ -2219,6 +2312,8 @@ void CompositorPrivate::Destroy() {
   layer_surfaces_.clear();
   toplevels_.clear();
   keyboards_.clear();
+  shortcut_settings_service_.reset();
+  key_binding_manager_.reset();
   outputs_.clear();
 
   // The XWM owns a Wayland client.
