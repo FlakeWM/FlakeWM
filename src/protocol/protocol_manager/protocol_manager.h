@@ -29,6 +29,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "src/input/touchpad_manager.h"
 #include "src/protocol/foreign_toplevel/foreign_toplevel.h"
 #include "src/protocol/input_timestamps/input_timestamps_manager.h"
 #include "src/protocol/toplevel_drag/toplevel_drag_manager.h"
@@ -61,6 +62,8 @@ class ProtocolManager final {
   void UpdateOutputs();
   void NotifyKeyboard(uint32_t time_msec);
   void NotifyPointer(uint32_t time_msec);
+  void NotifyTouch(wlr_surface* surface, uint32_t time_msec);
+  bool ShouldForwardAxis(const wlr_pointer_axis_event& event) const;
   bool WantsTearing(wlr_surface* surface) const;
   bool ShortcutsInhibited() const;
   bool ConfinePointer(double* delta_x, double* delta_y) const;
@@ -162,6 +165,7 @@ class ProtocolManager final {
   wlr_pointer_constraint_v1* active_constraint_ = nullptr;
   std::unique_ptr<InputTimestampsManager> input_timestamps_;
   std::unique_ptr<ToplevelDragManager> toplevel_drag_manager_;
+  std::unique_ptr<input::TouchpadManager> touchpad_manager_;
   std::vector<std::unique_ptr<ForeignToplevel>> foreign_toplevels_;
   std::unordered_map<wlr_tablet*, wlr_tablet_v2_tablet*> tablets_;
   std::unordered_map<wlr_tablet_tool*, wlr_tablet_v2_tablet_tool*>

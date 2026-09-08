@@ -45,6 +45,10 @@ endif()
 include(cmake/wlroots.cmake)
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core DBus Gui Qml Quick)
+find_path(QGSETTINGS_QT6_INCLUDE_DIR NAMES QGSettings/qgsettings.h
+  PATH_SUFFIXES qt6
+)
+find_library(QGSETTINGS_QT6_LIBRARY NAMES gsettings-qt6)
 find_program(XWAYLAND_EXECUTABLE NAMES Xwayland REQUIRED)
 find_program(WAYLAND_SCANNER_EXECUTABLE NAMES wayland-scanner REQUIRED)
 pkg_get_variable(WAYLAND_PROTOCOLS_DATA_DIR wayland-protocols pkgdatadir)
@@ -103,6 +107,8 @@ set(flakewm_CXX_SOURCES
   src/core/compositor_private/compositor_private.cc
   src/input/key_binding_manager.cc
   src/input/shortcut_settings_service.cc
+  src/input/touchpad_manager.cc
+  src/view/touch_feedback.cc
   src/protocol/foreign_toplevel/foreign_toplevel.cc
   src/protocol/input_method/input_method_popup.cc
   src/protocol/input_method/input_method_relay.cc
@@ -149,6 +155,8 @@ add_executable(flakewm
   src/core/compositor_private/compositor_private.h
   src/input/key_binding_manager.h
   src/input/shortcut_settings_service.h
+  src/input/touchpad_manager.h
+  src/view/touch_feedback.h
   src/protocol/foreign_toplevel/foreign_toplevel.h
   src/protocol/input_method/input_method_popup.h
   src/protocol/input_method/input_method_relay.h
@@ -196,6 +204,12 @@ qt_add_resources(flakewm "ssd_qml"
     src/view/ssd/icons/unmaximize_press.svg
 )
 
+qt_add_resources(flakewm "touch_feedback_qml"
+  PREFIX "/flakewm"
+  BASE src/view
+  FILES src/view/touch_feedback.qml
+)
+
 add_dependencies(flakewm flakewm-xwayland)
 
 target_link_libraries(flakewm
@@ -213,6 +227,16 @@ target_include_directories(flakewm PRIVATE ./ "${CMAKE_CURRENT_BINARY_DIR}")
 target_compile_definitions(flakewm PRIVATE
   FLAKEWM_VERSION="${PROJECT_VERSION}"
 )
+
+if(QGSETTINGS_QT6_INCLUDE_DIR AND QGSETTINGS_QT6_LIBRARY)
+  target_include_directories(flakewm PRIVATE "${QGSETTINGS_QT6_INCLUDE_DIR}")
+  target_link_libraries(flakewm PRIVATE "${QGSETTINGS_QT6_LIBRARY}")
+  target_compile_definitions(flakewm PRIVATE FLAKEWM_HAS_QGSETTINGS=1)
+else()
+  message(WARNING
+    "FLAKEWM: Qt6 QGSettings not found; touchpads will use safe defaults"
+  )
+endif()
 
 find_program(CPPLINT_EXECUTABLE NAMES cpplint)
 if(CPPLINT_EXECUTABLE)

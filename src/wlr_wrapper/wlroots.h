@@ -69,6 +69,7 @@ extern "C" {
 #include <wlr/types/wlr_tablet_v2.h>
 #include <wlr/types/wlr_tearing_control_v1.h>
 #include <wlr/types/wlr_text_input_v3.h>
+#include <wlr/types/wlr_touch.h>
 #include <wlr/types/wlr_transient_seat_v1.h>
 #include <wlr/types/wlr_viewporter.h>
 #include <wlr/types/wlr_virtual_keyboard_v1.h>

@@ -36,7 +36,8 @@ namespace flakewm {
 namespace protocol {
 
 ProtocolManager::ProtocolManager(core::CompositorPrivate* compositor)
-    : compositor_(compositor) {}
+    : compositor_(compositor),
+      touchpad_manager_(std::make_unique<input::TouchpadManager>()) {}
 
 ProtocolManager::~ProtocolManager() = default;
 
@@ -113,6 +114,7 @@ bool ProtocolManager::Create(wl_display* display, wlr_backend* backend,
 }
 
 void ProtocolManager::AddInput(wlr_input_device* device) {
+  touchpad_manager_->AddDevice(device);
   if (device->type == WLR_INPUT_DEVICE_TABLET) {
     wlr_tablet* tablet = wlr_tablet_from_input_device(device);
     wlr_tablet_v2_tablet* protocol_tablet =
@@ -177,6 +179,19 @@ void ProtocolManager::NotifyPointer(uint32_t time_msec) {
                           : wl_resource_get_client(
                                 seat_->pointer_state.focused_surface->resource);
   input_timestamps_->SendPointer(client, time_msec);
+}
+
+void ProtocolManager::NotifyTouch(wlr_surface* surface, uint32_t time_msec) {
+  UpdateIdleInhibition();
+  wlr_idle_notifier_v1_notify_activity(idle_notifier_, seat_);
+  wl_client* client =
+      surface == nullptr ? nullptr : wl_resource_get_client(surface->resource);
+  input_timestamps_->SendTouch(client, time_msec);
+}
+
+bool ProtocolManager::ShouldForwardAxis(
+    const wlr_pointer_axis_event& event) const {
+  return touchpad_manager_->ShouldForwardAxis(event);
 }
 
 bool ProtocolManager::WantsTearing(wlr_surface* surface) const {
@@ -478,6 +493,13 @@ void ProtocolManager::OnRequestStartDrag(
     wlr_seat_start_pointer_drag(manager->seat_, event->drag, event->serial);
     return;
   }
+  wlr_touch_point* point = nullptr;
+  if (wlr_seat_validate_touch_grab_serial(manager->seat_, event->origin,
+                                          event->serial, &point)) {
+    wlr_seat_start_touch_drag(manager->seat_, event->drag, event->serial,
+                              point);
+    return;
+  }
   wlr_data_source_destroy(event->drag->source);
 }
 
@@ -498,6 +520,7 @@ void ProtocolManager::OnDragDestroy(ProtocolManager* manager, void*) {
 void ProtocolManager::OnSwipeBegin(ProtocolManager* manager,
                                    wlr_pointer_swipe_begin_event* event) {
   manager->NotifyPointer(event->time_msec);
+  manager->touchpad_manager_->BeginSwipe(event->fingers);
   wlr_pointer_gestures_v1_send_swipe_begin(manager->pointer_gestures_,
                                            manager->seat_, event->time_msec,
                                            event->fingers);
@@ -506,6 +529,7 @@ void ProtocolManager::OnSwipeBegin(ProtocolManager* manager,
 void ProtocolManager::OnSwipeUpdate(ProtocolManager* manager,
                                     wlr_pointer_swipe_update_event* event) {
   manager->NotifyPointer(event->time_msec);
+  manager->touchpad_manager_->UpdateSwipe(event->dx, event->dy);
   wlr_pointer_gestures_v1_send_swipe_update(manager->pointer_gestures_,
                                             manager->seat_, event->time_msec,
                                             event->dx, event->dy);
@@ -514,14 +538,16 @@ void ProtocolManager::OnSwipeUpdate(ProtocolManager* manager,
 void ProtocolManager::OnSwipeEnd(ProtocolManager* manager,
                                  wlr_pointer_swipe_end_event* event) {
   manager->NotifyPointer(event->time_msec);
+  const bool handled = manager->touchpad_manager_->EndSwipe(event->cancelled);
   wlr_pointer_gestures_v1_send_swipe_end(manager->pointer_gestures_,
                                          manager->seat_, event->time_msec,
-                                         event->cancelled);
+                                         event->cancelled || handled);
 }
 
 void ProtocolManager::OnPinchBegin(ProtocolManager* manager,
                                    wlr_pointer_pinch_begin_event* event) {
   manager->NotifyPointer(event->time_msec);
+  manager->touchpad_manager_->BeginPinch(event->fingers);
   wlr_pointer_gestures_v1_send_pinch_begin(manager->pointer_gestures_,
                                            manager->seat_, event->time_msec,
                                            event->fingers);
@@ -530,6 +556,7 @@ void ProtocolManager::OnPinchBegin(ProtocolManager* manager,
 void ProtocolManager::OnPinchUpdate(ProtocolManager* manager,
                                     wlr_pointer_pinch_update_event* event) {
   manager->NotifyPointer(event->time_msec);
+  manager->touchpad_manager_->UpdatePinch(*event);
   wlr_pointer_gestures_v1_send_pinch_update(
       manager->pointer_gestures_, manager->seat_, event->time_msec, event->dx,
       event->dy, event->scale, event->rotation);
@@ -538,14 +565,16 @@ void ProtocolManager::OnPinchUpdate(ProtocolManager* manager,
 void ProtocolManager::OnPinchEnd(ProtocolManager* manager,
                                  wlr_pointer_pinch_end_event* event) {
   manager->NotifyPointer(event->time_msec);
+  const bool handled = manager->touchpad_manager_->EndPinch(event->cancelled);
   wlr_pointer_gestures_v1_send_pinch_end(manager->pointer_gestures_,
                                          manager->seat_, event->time_msec,
-                                         event->cancelled);
+                                         event->cancelled || handled);
 }
 
 void ProtocolManager::OnHoldBegin(ProtocolManager* manager,
                                   wlr_pointer_hold_begin_event* event) {
   manager->NotifyPointer(event->time_msec);
+  manager->touchpad_manager_->BeginHold(event->fingers);
   wlr_pointer_gestures_v1_send_hold_begin(manager->pointer_gestures_,
                                           manager->seat_, event->time_msec,
                                           event->fingers);
@@ -554,9 +583,10 @@ void ProtocolManager::OnHoldBegin(ProtocolManager* manager,
 void ProtocolManager::OnHoldEnd(ProtocolManager* manager,
                                 wlr_pointer_hold_end_event* event) {
   manager->NotifyPointer(event->time_msec);
+  const bool handled = manager->touchpad_manager_->EndHold(event->cancelled);
   wlr_pointer_gestures_v1_send_hold_end(manager->pointer_gestures_,
                                         manager->seat_, event->time_msec,
-                                        event->cancelled);
+                                        event->cancelled || handled);
 }
 
 void ProtocolManager::OnTabletAxis(ProtocolManager* manager,

@@ -243,6 +243,10 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
                   [](wlr_scene_tree* tree) { return tree == nullptr; })) {
     return Fail("Failed to create scene layers");
   }
+  touch_feedback_ = view::TouchFeedback::Create(&scene_->tree);
+  if (touch_feedback_ == nullptr) {
+    ABSL_LOG(WARNING) << "Touch feedback QML is unavailable";
+  }
 
   scene_layout_ = wlr_scene_attach_output_layout(scene_, output_layout_);
   if (scene_layout_ == nullptr) {
@@ -322,6 +326,11 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
   cursor_button_.Connect(&cursor_->events.button);
   cursor_axis_.Connect(&cursor_->events.axis);
   cursor_frame_.Connect(&cursor_->events.frame);
+  touch_down_.Connect(&cursor_->events.touch_down);
+  touch_up_.Connect(&cursor_->events.touch_up);
+  touch_motion_.Connect(&cursor_->events.touch_motion);
+  touch_cancel_.Connect(&cursor_->events.touch_cancel);
+  touch_frame_.Connect(&cursor_->events.touch_frame);
   request_cursor_.Connect(&seat_->events.request_set_cursor);
   pointer_focus_change_.Connect(&seat_->pointer_state.events.focus_change);
   request_selection_.Connect(&seat_->events.request_set_selection);
@@ -625,6 +634,22 @@ void CompositorPrivate::Keyboard::OnDestroy(Keyboard* keyboard, void*) {
   keyboard->device = nullptr;
   keyboard->handle = nullptr;
   keyboard->compositor->UpdateSeatCapabilities();
+}
+
+CompositorPrivate::TouchDevice::TouchDevice(CompositorPrivate* compositor,
+                                            wlr_input_device* device,
+                                            wlr_touch* touch)
+    : compositor(compositor),
+      device(device),
+      handle(touch),
+      destroy(this, OnDestroy) {}
+
+void CompositorPrivate::TouchDevice::OnDestroy(TouchDevice* touch, void*) {
+  touch->compositor->CancelTouchDevice(touch->handle);
+  touch->destroy.Disconnect();
+  touch->device = nullptr;
+  touch->handle = nullptr;
+  touch->compositor->UpdateSeatCapabilities();
 }
 
 CompositorPrivate::XdgDecoration::XdgDecoration(
@@ -1028,11 +1053,16 @@ void CompositorPrivate::Popup::OnDestroy(Popup* popup, void*) {
 }
 
 void CompositorPrivate::UpdateSeatCapabilities() {
-  // Pointer is always available, keyboard depends on attached devices.
   uint32_t capabilities = WL_SEAT_CAPABILITY_POINTER;
   for (const std::unique_ptr<Keyboard>& keyboard : keyboards_) {
     if (keyboard->handle != nullptr) {
       capabilities |= WL_SEAT_CAPABILITY_KEYBOARD;
+      break;
+    }
+  }
+  for (const std::unique_ptr<TouchDevice>& touch : touch_devices_) {
+    if (touch->handle != nullptr) {
+      capabilities |= WL_SEAT_CAPABILITY_TOUCH;
       break;
     }
   }
@@ -1081,6 +1111,81 @@ void CompositorPrivate::AddKeyboard(wlr_input_device* device) {
   }
 }
 
+void CompositorPrivate::AddTouch(wlr_input_device* device) {
+  wlr_touch* handle = wlr_touch_from_input_device(device);
+  wlr_cursor_attach_input_device(cursor_, device);
+  auto touch = std::make_unique<TouchDevice>(this, device, handle);
+  touch->destroy.Connect(&device->events.destroy);
+  touch_devices_.push_back(std::move(touch));
+  UpdateSeatCapabilities();
+}
+
+CompositorPrivate::TouchPoint* CompositorPrivate::FindTouchPoint(
+    wlr_touch* touch, int32_t touch_id) {
+  auto point = std::find_if(touch_points_.begin(), touch_points_.end(),
+                            [touch, touch_id](const TouchPoint& candidate) {
+                              return candidate.touch == touch &&
+                                     candidate.touch_id == touch_id;
+                            });
+  return point == touch_points_.end() ? nullptr : &*point;
+}
+
+void CompositorPrivate::CancelTouchDevice(wlr_touch* touch) {
+  std::vector<wlr_seat_client*> clients;
+  bool release_pointer = false;
+  for (const TouchPoint& point : touch_points_) {
+    if (point.touch != touch) {
+      continue;
+    }
+    if (point.mode == TouchPointMode::kPointer) {
+      release_pointer = true;
+      continue;
+    }
+    if (point.mode != TouchPointMode::kNative) {
+      continue;
+    }
+    wlr_touch_point* seat_point =
+        wlr_seat_touch_get_point(seat_, point.touch_id);
+    if (seat_point != nullptr && seat_point->client != nullptr &&
+        std::find(clients.begin(), clients.end(), seat_point->client) ==
+            clients.end()) {
+      clients.push_back(seat_point->client);
+    }
+  }
+  for (wlr_seat_client* client : clients) {
+    wlr_seat_touch_notify_cancel(seat_, client);
+  }
+  if (release_pointer) {
+    SendPointerTouchButton(0, WL_POINTER_BUTTON_STATE_RELEASED);
+    wlr_seat_pointer_notify_frame(seat_);
+  }
+  std::erase_if(touch_points_, [touch](const TouchPoint& point) {
+    return point.touch == touch;
+  });
+  if (touch_feedback_ != nullptr) {
+    touch_feedback_->CancelDevice(touch);
+  }
+}
+
+void CompositorPrivate::MoveTouchCursor(wlr_touch* touch, double x, double y) {
+  wlr_cursor_warp_absolute(cursor_, &touch->base, x, y);
+  if (protocol_manager_ != nullptr) {
+    protocol_manager_->MoveDrag();
+  }
+}
+
+void CompositorPrivate::SendPointerTouchButton(uint32_t time_msec,
+                                               wl_pointer_button_state state) {
+  wlr_pointer_button_event event = {
+      .pointer = nullptr,
+      .time_msec = time_msec,
+      .button = BTN_LEFT,
+      .state = state,
+  };
+  OnCursorButton(this, &event);
+  touch_pointer_frame_pending_ = true;
+}
+
 void CompositorPrivate::OnNewInput(CompositorPrivate* compositor,
                                    wlr_input_device* device) {
   if (compositor->protocol_manager_ != nullptr) {
@@ -1094,6 +1199,9 @@ void CompositorPrivate::OnNewInput(CompositorPrivate* compositor,
     case WLR_INPUT_DEVICE_POINTER:
       wlr_cursor_attach_input_device(compositor->cursor_, device);
       break;
+    case WLR_INPUT_DEVICE_TOUCH:
+      compositor->AddTouch(device);
+      return;
     default:
       ABSL_LOG(INFO) << "Ignoring unsupported input device " << device->name;
       break;
@@ -1769,7 +1877,11 @@ void CompositorPrivate::ProcessCursorMotion(uint32_t time_msec) {
 
 void CompositorPrivate::OnCursorMotion(CompositorPrivate* compositor,
                                        wlr_pointer_motion_event* event) {
-  // Relative pointer devices report deltas.
+  if (compositor->cursor_hidden_by_touch_) {
+    wlr_cursor_set_xcursor(compositor->cursor_, compositor->cursor_manager_,
+                           "default");
+    compositor->cursor_hidden_by_touch_ = false;
+  }
   double delta_x = event->delta_x;
   double delta_y = event->delta_y;
   if (compositor->protocol_manager_ != nullptr) {
@@ -1785,7 +1897,11 @@ void CompositorPrivate::OnCursorMotion(CompositorPrivate* compositor,
 
 void CompositorPrivate::OnCursorMotionAbsolute(
     CompositorPrivate* compositor, wlr_pointer_motion_absolute_event* event) {
-  // Absolute devices report normalized output coordinates.
+  if (compositor->cursor_hidden_by_touch_) {
+    wlr_cursor_set_xcursor(compositor->cursor_, compositor->cursor_manager_,
+                           "default");
+    compositor->cursor_hidden_by_touch_ = false;
+  }
   double layout_x = 0;
   double layout_y = 0;
   wlr_cursor_absolute_to_layout_coords(compositor->cursor_,
@@ -1808,6 +1924,11 @@ void CompositorPrivate::OnCursorMotionAbsolute(
 
 void CompositorPrivate::OnCursorButton(CompositorPrivate* compositor,
                                        wlr_pointer_button_event* event) {
+  if (event->pointer != nullptr && compositor->cursor_hidden_by_touch_) {
+    wlr_cursor_set_xcursor(compositor->cursor_, compositor->cursor_manager_,
+                           "default");
+    compositor->cursor_hidden_by_touch_ = false;
+  }
   if (compositor->protocol_manager_ != nullptr) {
     compositor->protocol_manager_->NotifyPointer(event->time_msec);
   }
@@ -1942,8 +2063,16 @@ void CompositorPrivate::OnCursorButton(CompositorPrivate* compositor,
 
 void CompositorPrivate::OnCursorAxis(CompositorPrivate* compositor,
                                      wlr_pointer_axis_event* event) {
+  if (event->pointer != nullptr && compositor->cursor_hidden_by_touch_) {
+    wlr_cursor_set_xcursor(compositor->cursor_, compositor->cursor_manager_,
+                           "default");
+    compositor->cursor_hidden_by_touch_ = false;
+  }
   if (compositor->protocol_manager_ != nullptr) {
     compositor->protocol_manager_->NotifyPointer(event->time_msec);
+    if (!compositor->protocol_manager_->ShouldForwardAxis(*event)) {
+      return;
+    }
   }
   // Forward wheel and touchpad axis events without changing their source.
   wlr_seat_pointer_notify_axis(
@@ -1954,6 +2083,170 @@ void CompositorPrivate::OnCursorAxis(CompositorPrivate* compositor,
 void CompositorPrivate::OnCursorFrame(CompositorPrivate* compositor, void*) {
   // Group all pointer events received in the current backend frame.
   wlr_seat_pointer_notify_frame(compositor->seat_);
+}
+
+void CompositorPrivate::OnTouchDown(CompositorPrivate* compositor,
+                                    wlr_touch_down_event* event) {
+  compositor->MoveTouchCursor(event->touch, event->x, event->y);
+  compositor->cursor_hidden_by_touch_ = true;
+  wlr_cursor_unset_image(compositor->cursor_);
+
+  double surface_x = 0;
+  double surface_y = 0;
+  wlr_surface* surface = nullptr;
+  Toplevel* toplevel =
+      compositor->ToplevelAt(compositor->cursor_->x, compositor->cursor_->y,
+                             &surface, &surface_x, &surface_y);
+
+  TouchPointMode mode = TouchPointMode::kIgnored;
+  if (surface != nullptr &&
+      wlr_surface_accepts_touch(surface, compositor->seat_)) {
+    if (compositor->protocol_manager_ != nullptr) {
+      compositor->protocol_manager_->NotifyTouch(surface, event->time_msec);
+    }
+    if (wlr_seat_touch_notify_down(compositor->seat_, surface, event->time_msec,
+                                   event->touch_id, surface_x,
+                                   surface_y) != 0) {
+      mode = TouchPointMode::kNative;
+      if (toplevel != nullptr) {
+        compositor->FocusToplevel(toplevel);
+      } else {
+        compositor->FocusLayerSurface(compositor->LayerSurfaceFor(surface));
+      }
+    }
+  }
+
+  const bool pointer_in_use =
+      std::any_of(compositor->touch_points_.begin(),
+                  compositor->touch_points_.end(), [](const TouchPoint& point) {
+                    return point.mode == TouchPointMode::kPointer;
+                  });
+  if (mode == TouchPointMode::kIgnored && !pointer_in_use) {
+    compositor->ProcessCursorMotion(event->time_msec);
+    wlr_cursor_unset_image(compositor->cursor_);
+    compositor->SendPointerTouchButton(event->time_msec,
+                                       WL_POINTER_BUTTON_STATE_PRESSED);
+    mode = TouchPointMode::kPointer;
+  }
+
+  compositor->touch_points_.push_back({
+      .touch = event->touch,
+      .touch_id = event->touch_id,
+      .mode = mode,
+      .last_x = compositor->cursor_->x,
+      .last_y = compositor->cursor_->y,
+  });
+  if (compositor->touch_feedback_ != nullptr) {
+    compositor->touch_feedback_->Down(
+        event->touch, event->touch_id,
+        {.x = compositor->cursor_->x, .y = compositor->cursor_->y});
+  }
+}
+
+void CompositorPrivate::OnTouchUp(CompositorPrivate* compositor,
+                                  wlr_touch_up_event* event) {
+  TouchPoint* point = compositor->FindTouchPoint(event->touch, event->touch_id);
+  if (point == nullptr) {
+    return;
+  }
+  if (point->mode == TouchPointMode::kNative) {
+    wlr_touch_point* seat_point =
+        wlr_seat_touch_get_point(compositor->seat_, event->touch_id);
+    if (compositor->protocol_manager_ != nullptr) {
+      compositor->protocol_manager_->NotifyTouch(
+          seat_point == nullptr ? nullptr : seat_point->surface,
+          event->time_msec);
+    }
+    wlr_seat_touch_notify_up(compositor->seat_, event->time_msec,
+                             event->touch_id);
+  } else if (point->mode == TouchPointMode::kPointer) {
+    compositor->SendPointerTouchButton(event->time_msec,
+                                       WL_POINTER_BUTTON_STATE_RELEASED);
+  }
+  std::erase_if(compositor->touch_points_, [&](const TouchPoint& candidate) {
+    return candidate.touch == event->touch &&
+           candidate.touch_id == event->touch_id;
+  });
+  if (compositor->touch_feedback_ != nullptr) {
+    compositor->touch_feedback_->Up(event->touch, event->touch_id);
+  }
+}
+
+void CompositorPrivate::OnTouchMotion(CompositorPrivate* compositor,
+                                      wlr_touch_motion_event* event) {
+  TouchPoint* point = compositor->FindTouchPoint(event->touch, event->touch_id);
+  if (point == nullptr) {
+    return;
+  }
+  compositor->MoveTouchCursor(event->touch, event->x, event->y);
+  const double delta_x = compositor->cursor_->x - point->last_x;
+  const double delta_y = compositor->cursor_->y - point->last_y;
+  point->last_x = compositor->cursor_->x;
+  point->last_y = compositor->cursor_->y;
+
+  if (point->mode == TouchPointMode::kNative) {
+    wlr_touch_point* seat_point =
+        wlr_seat_touch_get_point(compositor->seat_, event->touch_id);
+    if (seat_point != nullptr) {
+      if (compositor->protocol_manager_ != nullptr) {
+        compositor->protocol_manager_->NotifyTouch(seat_point->surface,
+                                                   event->time_msec);
+      }
+      wlr_seat_touch_notify_motion(compositor->seat_, event->time_msec,
+                                   event->touch_id, seat_point->sx + delta_x,
+                                   seat_point->sy + delta_y);
+    }
+  } else if (point->mode == TouchPointMode::kPointer) {
+    if (compositor->protocol_manager_ != nullptr) {
+      compositor->protocol_manager_->NotifyPointer(event->time_msec);
+    }
+    compositor->ProcessCursorMotion(event->time_msec);
+    wlr_cursor_unset_image(compositor->cursor_);
+    compositor->touch_pointer_frame_pending_ = true;
+  }
+  if (compositor->touch_feedback_ != nullptr) {
+    compositor->touch_feedback_->Motion(
+        event->touch, event->touch_id,
+        {.x = compositor->cursor_->x, .y = compositor->cursor_->y});
+  }
+}
+
+void CompositorPrivate::OnTouchCancel(CompositorPrivate* compositor,
+                                      wlr_touch_cancel_event* event) {
+  TouchPoint* point = compositor->FindTouchPoint(event->touch, event->touch_id);
+  if (point == nullptr) {
+    return;
+  }
+  if (point->mode == TouchPointMode::kNative) {
+    wlr_touch_point* seat_point =
+        wlr_seat_touch_get_point(compositor->seat_, event->touch_id);
+    if (seat_point != nullptr && seat_point->client != nullptr) {
+      wlr_seat_touch_notify_cancel(compositor->seat_, seat_point->client);
+    }
+  } else if (point->mode == TouchPointMode::kPointer) {
+    compositor->SendPointerTouchButton(event->time_msec,
+                                       WL_POINTER_BUTTON_STATE_RELEASED);
+  }
+  std::erase_if(compositor->touch_points_, [&](const TouchPoint& candidate) {
+    const bool remove =
+        candidate.touch == event->touch &&
+        (candidate.touch_id == event->touch_id ||
+         (candidate.mode == TouchPointMode::kNative &&
+          wlr_seat_touch_get_point(compositor->seat_, candidate.touch_id) ==
+              nullptr));
+    if (remove && compositor->touch_feedback_ != nullptr) {
+      compositor->touch_feedback_->Cancel(candidate.touch, candidate.touch_id);
+    }
+    return remove;
+  });
+}
+
+void CompositorPrivate::OnTouchFrame(CompositorPrivate* compositor, void*) {
+  wlr_seat_touch_notify_frame(compositor->seat_);
+  if (compositor->touch_pointer_frame_pending_) {
+    wlr_seat_pointer_notify_frame(compositor->seat_);
+    compositor->touch_pointer_frame_pending_ = false;
+  }
 }
 
 void CompositorPrivate::OnRequestCursor(
@@ -2137,6 +2430,9 @@ int CompositorPrivate::OnQtFrameTimer(void* data) {
       toplevel->ssd->Render();
     }
   }
+  if (compositor->touch_feedback_ != nullptr) {
+    compositor->touch_feedback_->Render();
+  }
   return compositor->qt_frame_timer_ == nullptr
              ? 0
              : wl_event_source_timer_update(compositor->qt_frame_timer_,
@@ -2294,6 +2590,11 @@ void CompositorPrivate::Destroy() {
   request_selection_.Disconnect();
   pointer_focus_change_.Disconnect();
   request_cursor_.Disconnect();
+  touch_frame_.Disconnect();
+  touch_cancel_.Disconnect();
+  touch_motion_.Disconnect();
+  touch_up_.Disconnect();
+  touch_down_.Disconnect();
   cursor_frame_.Disconnect();
   cursor_axis_.Disconnect();
   cursor_button_.Disconnect();
@@ -2311,6 +2612,8 @@ void CompositorPrivate::Destroy() {
   popups_.clear();
   layer_surfaces_.clear();
   toplevels_.clear();
+  touch_points_.clear();
+  touch_devices_.clear();
   keyboards_.clear();
   shortcut_settings_service_.reset();
   key_binding_manager_.reset();
@@ -2325,6 +2628,7 @@ void CompositorPrivate::Destroy() {
   }
   protocol_manager_.reset();
   input_method_relay_.reset();
+  touch_feedback_.reset();
 
   // Clear scene nodes.
   if (scene_ != nullptr) {

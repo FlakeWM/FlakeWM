@@ -38,6 +38,7 @@
 #include "src/utils/signal_listener.h"
 #include "src/view/ssd/ssd/ssd.h"
 #include "src/view/ssd/ssd_surface_clip/ssd_surface_clip.h"
+#include "src/view/touch_feedback.h"
 #include "src/wlr_wrapper/wlroots.h"
 
 namespace flakewm {
@@ -111,6 +112,28 @@ class CompositorPrivate final {
     utils::SignalListener<Keyboard, void> modifiers;
     utils::SignalListener<Keyboard, wlr_keyboard_key_event> key;
     utils::SignalListener<Keyboard, void> destroy;
+  };
+
+  struct TouchDevice {
+    TouchDevice(CompositorPrivate* compositor, wlr_input_device* device,
+                wlr_touch* touch);
+
+    static void OnDestroy(TouchDevice* touch, void*);
+
+    CompositorPrivate* compositor;
+    wlr_input_device* device;
+    wlr_touch* handle;
+    utils::SignalListener<TouchDevice, void> destroy;
+  };
+
+  enum class TouchPointMode : uint8_t { kNative, kPointer, kIgnored };
+
+  struct TouchPoint {
+    wlr_touch* touch;
+    int32_t touch_id;
+    TouchPointMode mode;
+    double last_x;
+    double last_y;
   };
 
   struct XdgDecoration {
@@ -221,6 +244,12 @@ class CompositorPrivate final {
 
   void UpdateSeatCapabilities();
   void AddKeyboard(wlr_input_device* device);
+  void AddTouch(wlr_input_device* device);
+  TouchPoint* FindTouchPoint(wlr_touch* touch, int32_t touch_id);
+  void CancelTouchDevice(wlr_touch* touch);
+  void MoveTouchCursor(wlr_touch* touch, double x, double y);
+  void SendPointerTouchButton(uint32_t time_msec,
+                              wl_pointer_button_state state);
   static void OnNewInput(CompositorPrivate* compositor,
                          wlr_input_device* device);
   static void OnNewVirtualKeyboard(CompositorPrivate* compositor,
@@ -261,6 +290,15 @@ class CompositorPrivate final {
   static void OnCursorAxis(CompositorPrivate* compositor,
                            wlr_pointer_axis_event* event);
   static void OnCursorFrame(CompositorPrivate* compositor, void*);
+  static void OnTouchDown(CompositorPrivate* compositor,
+                          wlr_touch_down_event* event);
+  static void OnTouchUp(CompositorPrivate* compositor,
+                        wlr_touch_up_event* event);
+  static void OnTouchMotion(CompositorPrivate* compositor,
+                            wlr_touch_motion_event* event);
+  static void OnTouchCancel(CompositorPrivate* compositor,
+                            wlr_touch_cancel_event* event);
+  static void OnTouchFrame(CompositorPrivate* compositor, void*);
   static void OnRequestCursor(CompositorPrivate* compositor,
                               wlr_seat_pointer_request_set_cursor_event* event);
   static void OnPointerFocusChange(CompositorPrivate* compositor,
@@ -306,6 +344,7 @@ class CompositorPrivate final {
   std::unique_ptr<protocol::ProtocolManager> protocol_manager_;
   std::unique_ptr<input::KeyBindingManager> key_binding_manager_;
   std::unique_ptr<input::ShortcutSettingsService> shortcut_settings_service_;
+  std::unique_ptr<view::TouchFeedback> touch_feedback_;
   std::unique_ptr<xwayland::XWaylandManager> xwayland_;
   wlr_seat* seat_ = nullptr;
   wlr_cursor* cursor_ = nullptr;
@@ -337,6 +376,16 @@ class CompositorPrivate final {
       this, OnCursorAxis};
   utils::SignalListener<CompositorPrivate, void> cursor_frame_{this,
                                                                OnCursorFrame};
+  utils::SignalListener<CompositorPrivate, wlr_touch_down_event> touch_down_{
+      this, OnTouchDown};
+  utils::SignalListener<CompositorPrivate, wlr_touch_up_event> touch_up_{
+      this, OnTouchUp};
+  utils::SignalListener<CompositorPrivate, wlr_touch_motion_event>
+      touch_motion_{this, OnTouchMotion};
+  utils::SignalListener<CompositorPrivate, wlr_touch_cancel_event>
+      touch_cancel_{this, OnTouchCancel};
+  utils::SignalListener<CompositorPrivate, void> touch_frame_{this,
+                                                              OnTouchFrame};
   utils::SignalListener<CompositorPrivate,
                         wlr_seat_pointer_request_set_cursor_event>
       request_cursor_{this, OnRequestCursor};
@@ -353,6 +402,8 @@ class CompositorPrivate final {
 
   std::vector<std::unique_ptr<Output>> outputs_;
   std::vector<std::unique_ptr<Keyboard>> keyboards_;
+  std::vector<std::unique_ptr<TouchDevice>> touch_devices_;
+  std::vector<TouchPoint> touch_points_;
   std::vector<std::unique_ptr<XdgDecoration>> xdg_decorations_;
   std::vector<std::unique_ptr<Toplevel>> toplevels_;
   std::vector<std::unique_ptr<LayerSurface>> layer_surfaces_;
@@ -369,6 +420,8 @@ class CompositorPrivate final {
   double last_click_y_ = 0;
   bool suppress_button_release_ = false;
   bool maximize_on_release_ = false;
+  bool cursor_hidden_by_touch_ = false;
+  bool touch_pointer_frame_pending_ = false;
   std::string socket_name_;
   bool nested_ = false;
   bool started_ = false;
