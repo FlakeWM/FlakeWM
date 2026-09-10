@@ -26,6 +26,7 @@
 
 #include <absl/log/absl_log.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <string>
@@ -34,6 +35,236 @@
 
 namespace flakewm {
 namespace protocol {
+
+class ProtocolManager::SessionLockState final {
+ public:
+  class OutputPresentation final {
+   public:
+    OutputPresentation(SessionLockState* lock, wlr_output* output)
+        : lock_(lock),
+          output_(output),
+          minimum_commit_seq_(output->commit_seq + 1) {
+      present_.Connect(&output_->events.present);
+      destroy_.Connect(&output_->events.destroy);
+    }
+
+    ~OutputPresentation() = default;
+
+    OutputPresentation(const OutputPresentation&) = delete;
+    OutputPresentation& operator=(const OutputPresentation&) = delete;
+
+    bool Presented() const { return presented_; }
+    wlr_output* Output() const { return output_; }
+
+   private:
+    static void OnPresent(OutputPresentation* output,
+                          wlr_output_event_present* event) {
+      if (event->presented &&
+          event->commit_seq >= output->minimum_commit_seq_) {
+        output->presented_ = true;
+        output->present_.Disconnect();
+        output->lock_->MaybeSendLocked();
+      }
+    }
+
+    static void OnDestroy(OutputPresentation* output, void*) {
+      output->present_.Disconnect();
+      output->destroy_.Disconnect();
+      output->output_ = nullptr;
+      output->presented_ = true;
+      output->lock_->MaybeSendLocked();
+    }
+
+    SessionLockState* lock_;
+    wlr_output* output_;
+    uint32_t minimum_commit_seq_;
+    bool presented_ = false;
+    utils::SignalListener<OutputPresentation, wlr_output_event_present>
+        present_{this, OnPresent};
+    utils::SignalListener<OutputPresentation, void> destroy_{this, OnDestroy};
+  };
+
+  class Surface final {
+   public:
+    Surface(SessionLockState* lock, wlr_session_lock_surface_v1* handle)
+        : lock_(lock), handle_(handle) {
+      scene_tree_ = wlr_scene_subsurface_tree_create(
+          lock_->manager_->session_lock_parent_, handle_->surface);
+      if (scene_tree_ == nullptr) {
+        return;
+      }
+      map_.Connect(&handle_->surface->events.map);
+      destroy_.Connect(&handle_->events.destroy);
+      output_commit_.Connect(&handle_->output->events.commit);
+      Configure();
+    }
+
+    ~Surface() {
+      map_.Disconnect();
+      destroy_.Disconnect();
+      output_commit_.Disconnect();
+      if (scene_tree_ != nullptr) {
+        wlr_scene_node_destroy(&scene_tree_->node);
+      }
+    }
+
+    Surface(const Surface&) = delete;
+    Surface& operator=(const Surface&) = delete;
+
+    bool IsValid() const { return scene_tree_ != nullptr; }
+
+    void Configure() {
+      if (handle_ == nullptr || handle_->output == nullptr ||
+          scene_tree_ == nullptr) {
+        return;
+      }
+      int width = 0;
+      int height = 0;
+      wlr_output_effective_resolution(handle_->output, &width, &height);
+      if (width > 0 && height > 0 &&
+          (handle_->pending.width != static_cast<uint32_t>(width) ||
+           handle_->pending.height != static_cast<uint32_t>(height))) {
+        wlr_session_lock_surface_v1_configure(handle_,
+                                              static_cast<uint32_t>(width),
+                                              static_cast<uint32_t>(height));
+      }
+      wlr_box box = {};
+      wlr_output_layout_get_box(lock_->manager_->output_layout_,
+                                handle_->output, &box);
+      wlr_scene_node_set_position(&scene_tree_->node, box.x, box.y);
+    }
+
+   private:
+    static void OnMap(Surface* surface, void*) {
+      if (surface->handle_ != nullptr) {
+        surface->lock_->manager_->FocusSessionLockSurface(
+            surface->handle_->surface);
+      }
+    }
+
+    static void OnDestroy(Surface* surface, void*) {
+      surface->map_.Disconnect();
+      surface->destroy_.Disconnect();
+      surface->output_commit_.Disconnect();
+      if (surface->scene_tree_ != nullptr) {
+        wlr_scene_node_destroy(&surface->scene_tree_->node);
+        surface->scene_tree_ = nullptr;
+      }
+      surface->handle_ = nullptr;
+      surface->lock_->RemoveSurface(surface);
+    }
+
+    static void OnOutputCommit(Surface* surface,
+                               wlr_output_event_commit* event) {
+      if ((event->state->committed &
+           (WLR_OUTPUT_STATE_MODE | WLR_OUTPUT_STATE_SCALE |
+            WLR_OUTPUT_STATE_TRANSFORM | WLR_OUTPUT_STATE_ENABLED)) != 0) {
+        surface->lock_->manager_->UpdateSessionLockGeometry();
+      }
+    }
+
+    SessionLockState* lock_;
+    wlr_session_lock_surface_v1* handle_;
+    wlr_scene_tree* scene_tree_ = nullptr;
+    utils::SignalListener<Surface, void> map_{this, OnMap};
+    utils::SignalListener<Surface, void> destroy_{this, OnDestroy};
+    utils::SignalListener<Surface, wlr_output_event_commit> output_commit_{
+        this, OnOutputCommit};
+  };
+
+  SessionLockState(ProtocolManager* manager, wlr_session_lock_v1* handle)
+      : manager_(manager), handle_(handle) {
+    new_surface_.Connect(&handle_->events.new_surface);
+    unlock_.Connect(&handle_->events.unlock);
+    destroy_.Connect(&handle_->events.destroy);
+    for (const std::unique_ptr<core::CompositorPrivate::Output>& output :
+         manager_->compositor_->outputs_) {
+      AddOutput(output->handle);
+    }
+    MaybeSendLocked();
+  }
+
+  ~SessionLockState() {
+    new_surface_.Disconnect();
+    unlock_.Disconnect();
+    destroy_.Disconnect();
+    surfaces_.clear();
+  }
+
+  SessionLockState(const SessionLockState&) = delete;
+  SessionLockState& operator=(const SessionLockState&) = delete;
+
+  void ConfigureSurfaces() {
+    for (const std::unique_ptr<Surface>& surface : surfaces_) {
+      surface->Configure();
+    }
+  }
+
+  void AddOutput(wlr_output* output) {
+    if (locked_sent_ || output == nullptr || !output->enabled ||
+        std::any_of(outputs_.begin(), outputs_.end(),
+                    [output](const std::unique_ptr<OutputPresentation>& item) {
+                      return item->Output() == output;
+                    })) {
+      return;
+    }
+    outputs_.push_back(std::make_unique<OutputPresentation>(this, output));
+  }
+
+ private:
+  static void OnNewSurface(SessionLockState* lock,
+                           wlr_session_lock_surface_v1* surface) {
+    auto wrapper = std::make_unique<Surface>(lock, surface);
+    if (!wrapper->IsValid()) {
+      ABSL_LOG(ERROR) << "Failed to create a session-lock surface";
+      return;
+    }
+    lock->surfaces_.push_back(std::move(wrapper));
+  }
+
+  static void OnUnlock(SessionLockState* lock, void*) {
+    lock->unlocked_ = true;
+    lock->manager_->UnlockSession();
+  }
+
+  static void OnDestroy(SessionLockState* lock, void*) {
+    lock->new_surface_.Disconnect();
+    lock->unlock_.Disconnect();
+    lock->destroy_.Disconnect();
+    lock->handle_ = nullptr;
+    lock->surfaces_.clear();
+    lock->manager_->FinishSessionLock(lock->unlocked_);
+  }
+
+  void RemoveSurface(Surface* surface) {
+    std::erase_if(surfaces_, [surface](const std::unique_ptr<Surface>& item) {
+      return item.get() == surface;
+    });
+  }
+
+  void MaybeSendLocked() {
+    if (locked_sent_ || handle_ == nullptr ||
+        !std::all_of(outputs_.begin(), outputs_.end(),
+                     [](const std::unique_ptr<OutputPresentation>& output) {
+                       return output->Presented();
+                     })) {
+      return;
+    }
+    locked_sent_ = true;
+    wlr_session_lock_v1_send_locked(handle_);
+  }
+
+  ProtocolManager* manager_;
+  wlr_session_lock_v1* handle_;
+  bool unlocked_ = false;
+  bool locked_sent_ = false;
+  std::vector<std::unique_ptr<OutputPresentation>> outputs_;
+  std::vector<std::unique_ptr<Surface>> surfaces_;
+  utils::SignalListener<SessionLockState, wlr_session_lock_surface_v1>
+      new_surface_{this, OnNewSurface};
+  utils::SignalListener<SessionLockState, void> unlock_{this, OnUnlock};
+  utils::SignalListener<SessionLockState, void> destroy_{this, OnDestroy};
+};
 
 ProtocolManager::ProtocolManager(core::CompositorPrivate* compositor)
     : compositor_(compositor),
@@ -44,19 +275,32 @@ ProtocolManager::~ProtocolManager() = default;
 bool ProtocolManager::Create(wl_display* display, wlr_backend* backend,
                              wlr_seat* seat, wlr_cursor* cursor,
                              wlr_scene_tree* drag_icon_parent,
+                             wlr_scene_tree* session_lock_parent,
                              wlr_output_layout* output_layout) {
   backend_ = backend;
   seat_ = seat;
   cursor_ = cursor;
   drag_icon_parent_ = drag_icon_parent;
+  session_lock_parent_ = session_lock_parent;
   output_layout_ = output_layout;
 
   // These protocols are self-contained once their globals are published.
   tearing_manager_ = wlr_tearing_control_manager_v1_create(display, 1);
+  ext_foreign_list_ = wlr_ext_foreign_toplevel_list_v1_create(display, 1);
+  foreign_capture_source_manager_ =
+      wlr_ext_foreign_toplevel_image_capture_source_manager_v1_create(display,
+                                                                      1);
+  output_capture_source_manager_ =
+      wlr_ext_output_image_capture_source_manager_v1_create(display, 1);
+  image_copy_capture_manager_ =
+      wlr_ext_image_copy_capture_manager_v1_create(display, 1);
   if (wlr_data_control_manager_v1_create(display) == nullptr ||
       wlr_export_dmabuf_manager_v1_create(display) == nullptr ||
       wlr_screencopy_manager_v1_create(display) == nullptr ||
-      tearing_manager_ == nullptr ||
+      ext_foreign_list_ == nullptr ||
+      foreign_capture_source_manager_ == nullptr ||
+      output_capture_source_manager_ == nullptr ||
+      image_copy_capture_manager_ == nullptr || tearing_manager_ == nullptr ||
       wlr_xdg_wm_dialog_v1_create(display, 1) == nullptr) {
     return false;
   }
@@ -65,6 +309,7 @@ bool ProtocolManager::Create(wl_display* display, wlr_backend* backend,
   idle_inhibit_manager_ = wlr_idle_inhibit_v1_create(display);
   shortcuts_manager_ = wlr_keyboard_shortcuts_inhibit_v1_create(display);
   pointer_constraints_ = wlr_pointer_constraints_v1_create(display);
+  relative_pointer_manager_ = wlr_relative_pointer_manager_v1_create(display);
   pointer_gestures_ = wlr_pointer_gestures_v1_create(display);
   tablet_manager_ = wlr_tablet_v2_create(display);
   virtual_pointer_manager_ = wlr_virtual_pointer_manager_v1_create(display);
@@ -73,15 +318,17 @@ bool ProtocolManager::Create(wl_display* display, wlr_backend* backend,
   foreign_manager_ = wlr_foreign_toplevel_manager_v1_create(display);
   output_manager_ = wlr_output_manager_v1_create(display);
   output_power_manager_ = wlr_output_power_manager_v1_create(display);
+  session_lock_manager_ = wlr_session_lock_manager_v1_create(display);
   input_timestamps_ = std::make_unique<InputTimestampsManager>(display);
   toplevel_drag_manager_ = std::make_unique<ToplevelDragManager>(display);
   if (idle_notifier_ == nullptr || idle_inhibit_manager_ == nullptr ||
       shortcuts_manager_ == nullptr || pointer_constraints_ == nullptr ||
-      pointer_gestures_ == nullptr || tablet_manager_ == nullptr ||
-      virtual_pointer_manager_ == nullptr ||
+      relative_pointer_manager_ == nullptr || pointer_gestures_ == nullptr ||
+      tablet_manager_ == nullptr || virtual_pointer_manager_ == nullptr ||
       transient_seat_manager_ == nullptr || activation_manager_ == nullptr ||
       foreign_manager_ == nullptr || output_manager_ == nullptr ||
-      output_power_manager_ == nullptr || !input_timestamps_->IsValid() ||
+      output_power_manager_ == nullptr || session_lock_manager_ == nullptr ||
+      session_lock_parent_ == nullptr || !input_timestamps_->IsValid() ||
       !toplevel_drag_manager_->IsValid()) {
     return false;
   }
@@ -89,6 +336,9 @@ bool ProtocolManager::Create(wl_display* display, wlr_backend* backend,
   new_virtual_pointer_.Connect(
       &virtual_pointer_manager_->events.new_virtual_pointer);
   new_constraint_.Connect(&pointer_constraints_->events.new_constraint);
+  new_session_lock_.Connect(&session_lock_manager_->events.new_lock);
+  toplevel_capture_request_.Connect(
+      &foreign_capture_source_manager_->events.new_request);
   new_idle_inhibitor_.Connect(&idle_inhibit_manager_->events.new_inhibitor);
   new_shortcuts_inhibitor_.Connect(&shortcuts_manager_->events.new_inhibitor);
   create_transient_seat_.Connect(&transient_seat_manager_->events.create_seat);
@@ -130,7 +380,12 @@ void ProtocolManager::AddInput(wlr_input_device* device) {
   }
 }
 
-void ProtocolManager::AddOutput(wlr_output*) { UpdateOutputs(); }
+void ProtocolManager::AddOutput(wlr_output* output) {
+  if (session_lock_ != nullptr) {
+    session_lock_->AddOutput(output);
+  }
+  UpdateOutputs();
+}
 
 void ProtocolManager::UpdateOutputs() {
   if (output_manager_ == nullptr) {
@@ -158,6 +413,7 @@ void ProtocolManager::UpdateOutputs() {
     head->state.y = box.y;
   }
   wlr_output_manager_v1_set_configuration(output_manager_, configuration);
+  UpdateSessionLockGeometry();
 }
 
 void ProtocolManager::NotifyKeyboard(uint32_t time_msec) {
@@ -179,6 +435,17 @@ void ProtocolManager::NotifyPointer(uint32_t time_msec) {
                           : wl_resource_get_client(
                                 seat_->pointer_state.focused_surface->resource);
   input_timestamps_->SendPointer(client, time_msec);
+}
+
+void ProtocolManager::SendRelativeMotion(
+    const wlr_pointer_motion_event& event) {
+  if (relative_pointer_manager_ == nullptr || seat_ == nullptr) {
+    return;
+  }
+  wlr_relative_pointer_manager_v1_send_relative_motion(
+      relative_pointer_manager_, seat_,
+      static_cast<uint64_t>(event.time_msec) * 1000, event.delta_x,
+      event.delta_y, event.unaccel_dx, event.unaccel_dy);
 }
 
 void ProtocolManager::NotifyTouch(wlr_surface* surface, uint32_t time_msec) {
@@ -213,6 +480,8 @@ bool ProtocolManager::ShortcutsInhibited() const {
   }
   return false;
 }
+
+bool ProtocolManager::SessionLocked() const { return session_locked_; }
 
 bool ProtocolManager::ConfinePointer(double* delta_x, double* delta_y) const {
   if (active_constraint_ == nullptr ||
@@ -302,8 +571,8 @@ void ProtocolManager::MapToplevel(wlr_surface* surface, const char* title,
   if (surface == nullptr || FindForeign(surface) != nullptr) {
     return;
   }
-  auto foreign =
-      std::make_unique<ForeignToplevel>(this, foreign_manager_, surface);
+  auto foreign = std::make_unique<ForeignToplevel>(this, foreign_manager_,
+                                                   ext_foreign_list_, surface);
   if (!foreign->IsValid()) {
     return;
   }
@@ -423,6 +692,34 @@ void ProtocolManager::OnNewConstraint(ProtocolManager* manager,
   if (manager->seat_->pointer_state.focused_surface == constraint->surface &&
       constraint->seat == manager->seat_) {
     manager->ActivateConstraint(constraint);
+  }
+}
+
+void ProtocolManager::OnNewSessionLock(ProtocolManager* manager,
+                                       wlr_session_lock_v1* lock) {
+  manager->BeginSessionLock(lock);
+}
+
+void ProtocolManager::OnToplevelCaptureRequest(
+    ProtocolManager* manager,
+    wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request* request) {
+  wlr_ext_image_capture_source_v1* source = nullptr;
+  if (request->toplevel_handle != nullptr &&
+      request->toplevel_handle->data != nullptr) {
+    auto* foreign =
+        static_cast<ForeignToplevel*>(request->toplevel_handle->data);
+    core::CompositorPrivate::Toplevel* toplevel =
+        manager->compositor_->ToplevelForSurface(foreign->Surface());
+    if (toplevel != nullptr && toplevel->scene_tree != nullptr) {
+      source = foreign->CaptureSource(
+          &toplevel->scene_tree->node,
+          wl_display_get_event_loop(manager->seat_->display),
+          manager->compositor_->allocator_, manager->compositor_->renderer_);
+    }
+  }
+  if (!wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request_accept(
+          request, source)) {
+    ABSL_LOG(ERROR) << "Failed to create a toplevel capture source resource";
   }
 }
 
@@ -747,11 +1044,121 @@ void ProtocolManager::ActivateConstraint(
   }
 }
 
+void ProtocolManager::BeginSessionLock(wlr_session_lock_v1* lock) {
+  if (session_lock_ != nullptr) {
+    wlr_session_lock_v1_destroy(lock);
+    return;
+  }
+
+  session_locked_ = true;
+  compositor_->ResetCursorMode();
+  ActivateConstraint(nullptr);
+  if (wlr_seat_pointer_has_grab(seat_)) {
+    wlr_seat_pointer_end_grab(seat_);
+  }
+  if (wlr_seat_keyboard_has_grab(seat_)) {
+    wlr_seat_keyboard_end_grab(seat_);
+  }
+  if (wlr_seat_touch_has_grab(seat_)) {
+    wlr_seat_touch_end_grab(seat_);
+  }
+  for (const std::unique_ptr<core::CompositorPrivate::TouchDevice>& device :
+       compositor_->touch_devices_) {
+    if (device->handle != nullptr) {
+      compositor_->CancelTouchDevice(device->handle);
+    }
+  }
+  wlr_seat_pointer_clear_focus(seat_);
+  wlr_seat_keyboard_clear_focus(seat_);
+
+  if (session_lock_blank_ == nullptr) {
+    constexpr float color[4] = {0.0F, 0.0F, 0.0F, 1.0F};
+    session_lock_blank_ =
+        wlr_scene_rect_create(session_lock_parent_, 1, 1, color);
+    if (session_lock_blank_ == nullptr) {
+      ABSL_LOG(ERROR) << "Failed to create the secure session-lock blank";
+      session_locked_ = false;
+      wlr_session_lock_v1_destroy(lock);
+      compositor_->FocusNextToplevel(nullptr);
+      return;
+    }
+  }
+  UpdateSessionLockGeometry();
+  wlr_scene_node_raise_to_top(&session_lock_parent_->node);
+  session_lock_ = std::make_unique<SessionLockState>(this, lock);
+  wlr_scene_node_set_enabled(&session_lock_parent_->node, true);
+  for (const std::unique_ptr<core::CompositorPrivate::Output>& output :
+       compositor_->outputs_) {
+    if (output->handle != nullptr && output->handle->enabled) {
+      wlr_output_schedule_frame(output->handle);
+    }
+  }
+  UpdateIdleInhibition();
+}
+
+void ProtocolManager::UnlockSession() {
+  if (!session_locked_) {
+    return;
+  }
+  session_locked_ = false;
+  wlr_scene_node_set_enabled(&session_lock_parent_->node, false);
+  compositor_->FocusNextToplevel(nullptr);
+  UpdateIdleInhibition();
+}
+
+void ProtocolManager::FinishSessionLock(bool unlocked) {
+  session_lock_.reset();
+  if (!unlocked) {
+    // If the locker crashes, retain the opaque blank and accept a replacement
+    // locker. Revealing the desktop would turn a client crash into a lock
+    // bypass.
+    session_locked_ = true;
+    wlr_scene_node_raise_to_top(&session_lock_parent_->node);
+    wlr_scene_node_set_enabled(&session_lock_parent_->node, true);
+    wlr_seat_pointer_clear_focus(seat_);
+    wlr_seat_keyboard_clear_focus(seat_);
+    ABSL_LOG(WARNING)
+        << "Session-lock client disappeared; keeping the session locked";
+  }
+}
+
+void ProtocolManager::FocusSessionLockSurface(wlr_surface* surface) {
+  if (!session_locked_ || surface == nullptr || !surface->mapped) {
+    return;
+  }
+  if (wlr_keyboard* keyboard = wlr_seat_get_keyboard(seat_);
+      keyboard != nullptr) {
+    wlr_seat_set_keyboard(seat_, keyboard);
+    wlr_seat_keyboard_notify_enter(seat_, surface, keyboard->keycodes,
+                                   keyboard->num_keycodes,
+                                   &keyboard->modifiers);
+  }
+}
+
+void ProtocolManager::UpdateSessionLockGeometry() {
+  if (session_lock_blank_ == nullptr || output_layout_ == nullptr) {
+    return;
+  }
+  wlr_box box = {};
+  wlr_output_layout_get_box(output_layout_, nullptr, &box);
+  wlr_scene_node_set_position(&session_lock_blank_->node, box.x, box.y);
+  wlr_scene_rect_set_size(session_lock_blank_, std::max(box.width, 1),
+                          std::max(box.height, 1));
+  if (session_lock_ != nullptr) {
+    session_lock_->ConfigureSurfaces();
+  }
+}
+
 void ProtocolManager::UpdateIdleInhibition() {
   bool inhibited = false;
   wlr_idle_inhibitor_v1* inhibitor;
   wl_list_for_each(inhibitor, &idle_inhibit_manager_->inhibitors, link) {
-    if (inhibitor->surface != nullptr && inhibitor->surface->mapped) {
+    wlr_surface* root = inhibitor->surface == nullptr
+                            ? nullptr
+                            : wlr_surface_get_root_surface(inhibitor->surface);
+    if (root != nullptr && root->mapped &&
+        (!session_locked_ ||
+         wlr_session_lock_surface_v1_try_from_wlr_surface(root) != nullptr)) {
       inhibited = true;
       break;
     }

@@ -56,16 +56,19 @@ class ProtocolManager final {
 
   bool Create(wl_display* display, wlr_backend* backend, wlr_seat* seat,
               wlr_cursor* cursor, wlr_scene_tree* drag_icon_parent,
+              wlr_scene_tree* session_lock_parent,
               wlr_output_layout* output_layout);
   void AddInput(wlr_input_device* device);
   void AddOutput(wlr_output* output);
   void UpdateOutputs();
   void NotifyKeyboard(uint32_t time_msec);
   void NotifyPointer(uint32_t time_msec);
+  void SendRelativeMotion(const wlr_pointer_motion_event& event);
   void NotifyTouch(wlr_surface* surface, uint32_t time_msec);
   bool ShouldForwardAxis(const wlr_pointer_axis_event& event) const;
   bool WantsTearing(wlr_surface* surface) const;
   bool ShortcutsInhibited() const;
+  bool SessionLocked() const;
   bool ConfinePointer(double* delta_x, double* delta_y) const;
   void UpdatePointerFocus(wlr_surface* surface);
   void UpdateKeyboardFocus(wlr_surface* surface);
@@ -89,6 +92,12 @@ class ProtocolManager final {
       wlr_virtual_pointer_v1_new_pointer_event* event);
   static void OnNewConstraint(ProtocolManager* manager,
                               wlr_pointer_constraint_v1* constraint);
+  static void OnNewSessionLock(ProtocolManager* manager,
+                               wlr_session_lock_v1* lock);
+  static void OnToplevelCaptureRequest(
+      ProtocolManager* manager,
+      wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request*
+          request);
   static void OnConstraintDestroy(ProtocolManager* manager, void*);
   static void OnNewIdleInhibitor(ProtocolManager* manager,
                                  wlr_idle_inhibitor_v1* inhibitor);
@@ -137,6 +146,11 @@ class ProtocolManager final {
   void ApplyOutputConfiguration(wlr_output_configuration_v1* configuration,
                                 bool test_only);
   void ActivateConstraint(wlr_pointer_constraint_v1* constraint);
+  void BeginSessionLock(wlr_session_lock_v1* lock);
+  void UnlockSession();
+  void FinishSessionLock(bool unlocked);
+  void FocusSessionLockSurface(wlr_surface* surface);
+  void UpdateSessionLockGeometry();
   void UpdateIdleInhibition();
   ForeignToplevel* FindForeign(wlr_surface* surface) const;
   wlr_tablet_v2_tablet_tool* TabletTool(wlr_tablet_tool* tool);
@@ -149,10 +163,13 @@ class ProtocolManager final {
   wlr_scene_tree* drag_icon_parent_ = nullptr;
   wlr_scene_tree* drag_icon_tree_ = nullptr;
   wlr_output_layout* output_layout_ = nullptr;
+  wlr_scene_tree* session_lock_parent_ = nullptr;
+  wlr_scene_rect* session_lock_blank_ = nullptr;
   wlr_idle_notifier_v1* idle_notifier_ = nullptr;
   wlr_idle_inhibit_manager_v1* idle_inhibit_manager_ = nullptr;
   wlr_keyboard_shortcuts_inhibit_manager_v1* shortcuts_manager_ = nullptr;
   wlr_pointer_constraints_v1* pointer_constraints_ = nullptr;
+  wlr_relative_pointer_manager_v1* relative_pointer_manager_ = nullptr;
   wlr_pointer_gestures_v1* pointer_gestures_ = nullptr;
   wlr_tablet_manager_v2* tablet_manager_ = nullptr;
   wlr_virtual_pointer_manager_v1* virtual_pointer_manager_ = nullptr;
@@ -160,9 +177,19 @@ class ProtocolManager final {
   wlr_tearing_control_manager_v1* tearing_manager_ = nullptr;
   wlr_xdg_activation_v1* activation_manager_ = nullptr;
   wlr_foreign_toplevel_manager_v1* foreign_manager_ = nullptr;
+  wlr_ext_foreign_toplevel_list_v1* ext_foreign_list_ = nullptr;
+  wlr_ext_foreign_toplevel_image_capture_source_manager_v1*
+      foreign_capture_source_manager_ = nullptr;
+  wlr_ext_output_image_capture_source_manager_v1*
+      output_capture_source_manager_ = nullptr;
+  wlr_ext_image_copy_capture_manager_v1* image_copy_capture_manager_ = nullptr;
+  wlr_session_lock_manager_v1* session_lock_manager_ = nullptr;
   wlr_output_manager_v1* output_manager_ = nullptr;
   wlr_output_power_manager_v1* output_power_manager_ = nullptr;
   wlr_pointer_constraint_v1* active_constraint_ = nullptr;
+  class SessionLockState;
+  std::unique_ptr<SessionLockState> session_lock_;
+  bool session_locked_ = false;
   std::unique_ptr<InputTimestampsManager> input_timestamps_;
   std::unique_ptr<ToplevelDragManager> toplevel_drag_manager_;
   std::unique_ptr<input::TouchpadManager> touchpad_manager_;
@@ -176,6 +203,12 @@ class ProtocolManager final {
       new_virtual_pointer_{this, OnNewVirtualPointer};
   utils::SignalListener<ProtocolManager, wlr_pointer_constraint_v1>
       new_constraint_{this, OnNewConstraint};
+  utils::SignalListener<ProtocolManager, wlr_session_lock_v1> new_session_lock_{
+      this, OnNewSessionLock};
+  utils::SignalListener<
+      ProtocolManager,
+      wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request>
+      toplevel_capture_request_{this, OnToplevelCaptureRequest};
   utils::SignalListener<ProtocolManager, void> constraint_destroy_{
       this, OnConstraintDestroy};
   utils::SignalListener<ProtocolManager, wlr_idle_inhibitor_v1>

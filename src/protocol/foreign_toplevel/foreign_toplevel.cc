@@ -23,6 +23,7 @@
  */
 
 #include "src/protocol/foreign_toplevel/foreign_toplevel.h"
+
 #include "src/protocol/protocol_manager/protocol_manager.h"
 
 namespace flakewm {
@@ -30,7 +31,7 @@ namespace protocol {
 
 ForeignToplevel::ForeignToplevel(
     ProtocolManager* manager, wlr_foreign_toplevel_manager_v1* foreign_manager,
-    wlr_surface* surface)
+    wlr_ext_foreign_toplevel_list_v1* ext_foreign_list, wlr_surface* surface)
     : manager_(manager),
       surface_(surface),
       handle_(wlr_foreign_toplevel_handle_v1_create(foreign_manager)) {
@@ -43,10 +44,22 @@ ForeignToplevel::ForeignToplevel(
   request_fullscreen_.Connect(&handle_->events.request_fullscreen);
   request_close_.Connect(&handle_->events.request_close);
   destroy_.Connect(&handle_->events.destroy);
+  const wlr_ext_foreign_toplevel_handle_v1_state state = {};
+  ext_handle_ =
+      wlr_ext_foreign_toplevel_handle_v1_create(ext_foreign_list, &state);
+  if (ext_handle_ != nullptr) {
+    ext_handle_->data = this;
+    ext_destroy_.Connect(&ext_handle_->events.destroy);
+  }
 }
 
 ForeignToplevel::~ForeignToplevel() {
   output_destroy_.Disconnect();
+  capture_source_destroy_.Disconnect();
+  if (ext_handle_ != nullptr) {
+    ext_destroy_.Disconnect();
+    wlr_ext_foreign_toplevel_handle_v1_destroy(ext_handle_);
+  }
   if (handle_ != nullptr) {
     wlr_foreign_toplevel_handle_v1_destroy(handle_);
   }
@@ -58,12 +71,38 @@ wlr_foreign_toplevel_handle_v1* ForeignToplevel::Handle() const {
   return handle_;
 }
 
-bool ForeignToplevel::IsValid() const { return handle_ != nullptr; }
+wlr_ext_foreign_toplevel_handle_v1* ForeignToplevel::ExtHandle() const {
+  return ext_handle_;
+}
+
+wlr_ext_image_capture_source_v1* ForeignToplevel::CaptureSource(
+    wlr_scene_node* node, wl_event_loop* event_loop, wlr_allocator* allocator,
+    wlr_renderer* renderer) {
+  if (capture_source_ == nullptr && node != nullptr) {
+    capture_source_ = wlr_ext_image_capture_source_v1_create_with_scene_node(
+        node, event_loop, allocator, renderer);
+    if (capture_source_ != nullptr) {
+      capture_source_destroy_.Connect(&capture_source_->events.destroy);
+    }
+  }
+  return capture_source_;
+}
+
+bool ForeignToplevel::IsValid() const {
+  return handle_ != nullptr && ext_handle_ != nullptr;
+}
 
 void ForeignToplevel::SetTitle(const char* title) {
   if (handle_ != nullptr) {
     wlr_foreign_toplevel_handle_v1_set_title(handle_,
                                              title == nullptr ? "" : title);
+  }
+  if (ext_handle_ != nullptr) {
+    const wlr_ext_foreign_toplevel_handle_v1_state state = {
+        .title = title == nullptr ? "" : title,
+        .app_id = ext_handle_->app_id,
+    };
+    wlr_ext_foreign_toplevel_handle_v1_update_state(ext_handle_, &state);
   }
 }
 
@@ -71,6 +110,13 @@ void ForeignToplevel::SetAppId(const char* app_id) {
   if (handle_ != nullptr) {
     wlr_foreign_toplevel_handle_v1_set_app_id(handle_,
                                               app_id == nullptr ? "" : app_id);
+  }
+  if (ext_handle_ != nullptr) {
+    const wlr_ext_foreign_toplevel_handle_v1_state state = {
+        .title = ext_handle_->title,
+        .app_id = app_id == nullptr ? "" : app_id,
+    };
+    wlr_ext_foreign_toplevel_handle_v1_update_state(ext_handle_, &state);
   }
 }
 
@@ -162,6 +208,16 @@ void ForeignToplevel::OnDestroy(ForeignToplevel* foreign, void*) {
   foreign->output_destroy_.Disconnect();
   foreign->destroy_.Disconnect();
   foreign->handle_ = nullptr;
+}
+
+void ForeignToplevel::OnExtDestroy(ForeignToplevel* foreign, void*) {
+  foreign->ext_destroy_.Disconnect();
+  foreign->ext_handle_ = nullptr;
+}
+
+void ForeignToplevel::OnCaptureSourceDestroy(ForeignToplevel* foreign, void*) {
+  foreign->capture_source_destroy_.Disconnect();
+  foreign->capture_source_ = nullptr;
 }
 
 }  // namespace protocol

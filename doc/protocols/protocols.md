@@ -33,15 +33,20 @@ The number under the 「Version Supported」 section stands for the highest inte
 
 | Name                          | Version Supported | Note                         |
 | :-------------------------------- | :------: | :--------------------------- |
+| wp_color_manager_v1               |    2     | Renderer-dependent color/HDR metadata |
 | wp_content_type_manager_v1        |    no    | 1                            |
 | wp_cursor_shape_manager_v1        |    no    | 1                            |
 | wp_drm_lease_device_v1            |    no    | 1                            |
-| ext_foreign_toplevel_list_v1      |    no    | 1                            |
+| ext_foreign_toplevel_list_v1      |    1     | Portal window selection      |
+| ext_foreign_toplevel_image_capture_source_manager_v1 | 1 | Portal window capture source |
+| ext_image_copy_capture_manager_v1 |    1     | Portal/PipeWire capture      |
 | ext_idle_notifier_v1              |    2     |                              |
-| ext_session_lock_manager_v1       |    no    | 1                            |
+| ext_output_image_capture_source_manager_v1 | 1 | Portal output capture source |
+| ext_session_lock_manager_v1       |    1     | Secure fail-closed lock      |
 | ext_transient_seat_manager_v1     |    1     |                              |
 | wp_fractional_scale_manager_v1    |    1     |                              |
-| wp_security_context_manager_v1    |    no    | 1                            |
+| wp_linux_drm_syncobj_manager_v1   |    1     | Published with renderer/backend timeline support |
+| wp_security_context_manager_v1    |    1     | Sandboxed-client global filtering |
 | wp_single_pixel_buffer_manager_v1 |    no    | 1                            |
 | wp_tearing_control_manager_v1     |    1     |                              |
 | xdg_activation_v1                 |    1     |                              |
@@ -59,11 +64,11 @@ The number under the 「Version Supported」 section stands for the highest inte
 | zwp_input_timestamps_manager_v1           |    1     |                                   |
 | zwp_keyboard_shortcuts_inhibit_manager_v1 |    1     |                                   |
 | zwp_linux_dmabuf_v1                       |    4     | Baoadcasts when render supports DMA-BUF |
-| zwp_linux_explicit_synchronization_v1     |    no    | 2                                 |
+| zwp_linux_explicit_synchronization_v1     |    no    | Legacy; use linux-drm-syncobj-v1  |
 | zwp_pointer_constraints_v1                |    1     |                                   |
 | zwp_pointer_gestures_v1                   |    3     |                                   |
 | zwp_primary_selection_device_manager_v1   |    1     |                                   |
-| zwp_relative_pointer_manager_v1           |    no    | 1                                 |
+| zwp_relative_pointer_manager_v1           |    1     | Raw motion for locked pointers    |
 | zwp_tablet_manager_v1                     |    no    | deprecated, using tablet v2 instead        |
 | zwp_tablet_manager_v2                     |    1     |                                   |
 | zwp_text_input_v1                         |    1     |                                   |
@@ -85,13 +90,19 @@ The number under the 「Version Supported」 section stands for the highest inte
 | zwlr_data_control_manager_v1     |    2     |            |
 | zwlr_export_dmabuf_manager_v1    |    1     |            |
 | zwlr_foreign_toplevel_manager_v1 |    3     |            |
-| zwlr_gamma_control_manager_v1    |    no    | 1          |
+| zwlr_gamma_control_manager_v1    |    1     | Hidden from security-context clients |
 | zwlr_input_inhibit_manager_v1    |    no    | deprecated |
 | zwlr_layer_shell_v1              |    4     |            |
 | zwlr_output_manager_v1           |    4     |            |
 | zwlr_output_power_manager_v1     |    1     |            |
 | zwlr_screencopy_manager_v1       |    3     |            |
 | zwlr_virtual_pointer_v1          |    2     |            |
+
+Security-context clients receive an allow-list of ordinary application
+protocols. Screen capture, virtual input, output control, session lock, input
+method, layer-shell, foreign-toplevel enumeration, data-control and Gamma
+Control globals are hidden. Trusted desktop services using the compositor's
+regular socket retain the complete registry.
 
 ## kde
 

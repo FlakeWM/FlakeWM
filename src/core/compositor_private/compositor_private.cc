@@ -39,6 +39,7 @@
 #include <cstring>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -61,6 +62,58 @@ constexpr std::array<uint32_t, 4> kLayerOrder = {
     ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM,
     ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND,
 };
+
+// A security-context child is an ordinary sandboxed application. Keep this
+// allow-list deliberately narrow: newly-added globals remain unavailable until
+// they have been reviewed. Privileged desktop services connect through the
+// compositor's regular socket and retain the full registry.
+constexpr auto kAllowedSecurityContextGlobals =
+    std::to_array<std::string_view>({
+        "wl_shm",
+        "wl_drm",
+        "zwp_linux_dmabuf_v1",
+        "wp_linux_drm_syncobj_manager_v1",
+        "wl_compositor",
+        "wl_subcompositor",
+        "wl_data_device_manager",
+        "zwp_primary_selection_device_manager_v1",
+        "wp_viewporter",
+        "wp_fractional_scale_manager_v1",
+        "wp_presentation",
+        "wp_tearing_control_manager_v1",
+        "wl_output",
+        "wp_color_manager_v1",
+        "xdg_wm_base",
+        "zxdg_decoration_manager_v1",
+        "xdg_activation_v1",
+        "xdg_wm_dialog_v1",
+        "zwp_relative_pointer_manager_v1",
+        "zwp_pointer_constraints_v1",
+        "zwp_pointer_gestures_v1",
+        "zwp_tablet_manager_v2",
+        "zwp_idle_inhibit_manager_v1",
+        "zwp_keyboard_shortcuts_inhibit_manager_v1",
+        "zwp_input_timestamps_manager_v1",
+        "zwp_text_input_manager_v1",
+        "zwp_text_input_manager_v2",
+        "zwp_text_input_manager_v3",
+        "zxdg_output_manager_v1",
+    });
+
+bool FilterSecurityContextGlobal(const wl_client* client,
+                                 const wl_global* global, void* data) {
+  auto* manager = static_cast<wlr_security_context_manager_v1*>(data);
+  const wl_interface* interface = wl_global_get_interface(global);
+  if (manager == nullptr || interface == nullptr ||
+      wlr_security_context_manager_v1_lookup_client(manager, client) ==
+          nullptr) {
+    return true;
+  }
+  const std::string_view name(interface->name);
+  return std::find(kAllowedSecurityContextGlobals.begin(),
+                   kAllowedSecurityContextGlobals.end(),
+                   name) != kAllowedSecurityContextGlobals.end();
+}
 
 wlr_renderer* CreateRenderer(wlr_backend* backend) {
   // Keep explicit overrides useful for debugging and driver workarounds.
@@ -184,6 +237,20 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
     return Fail("Failed to initialize renderer globals.");
   }
 
+  const int renderer_drm_fd = wlr_renderer_get_drm_fd(renderer_);
+  if (renderer_drm_fd >= 0 && renderer_->features.timeline &&
+      backend_->features.timeline) {
+    explicit_sync_manager_ =
+        wlr_linux_drm_syncobj_manager_v1_create(display_, 1, renderer_drm_fd);
+    if (explicit_sync_manager_ == nullptr) {
+      return Fail("Failed to create Linux DRM syncobj manager");
+    }
+    ABSL_LOG(INFO) << "Linux explicit synchronization enabled";
+  } else {
+    ABSL_LOG(INFO) << "Linux explicit synchronization unavailable: timeline "
+                      "support is incomplete";
+  }
+
   allocator_ = wlr_allocator_autocreate(backend_, renderer_);
   if (allocator_ == nullptr) {
     return Fail("Failed to create wlroots allocator.");
@@ -203,6 +270,12 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
   if (wlr_primary_selection_v1_device_manager_create(display_) == nullptr) {
     return Fail("Failed to create primary-selection manager");
   }
+  security_context_manager_ = wlr_security_context_manager_v1_create(display_);
+  if (security_context_manager_ == nullptr) {
+    return Fail("Failed to create security-context manager");
+  }
+  wl_display_set_global_filter(display_, FilterSecurityContextGlobal,
+                               security_context_manager_);
   if (wlr_viewporter_create(display_) == nullptr) {
     return Fail("Failed to create viewporter global");
   }
@@ -228,6 +301,54 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
     return Fail("Failed to create scene graph");
   }
 
+  gamma_control_manager_ = wlr_gamma_control_manager_v1_create(display_);
+  if (gamma_control_manager_ == nullptr) {
+    return Fail("Failed to create gamma-control manager");
+  }
+  wlr_scene_set_gamma_control_manager_v1(scene_, gamma_control_manager_);
+
+  if (renderer_->features.input_color_transform) {
+    size_t transfer_functions_length = 0;
+    wp_color_manager_v1_transfer_function* transfer_functions =
+        wlr_color_manager_v1_transfer_function_list_from_renderer(
+            renderer_, &transfer_functions_length);
+    size_t primaries_length = 0;
+    wp_color_manager_v1_primaries* primaries =
+        wlr_color_manager_v1_primaries_list_from_renderer(renderer_,
+                                                          &primaries_length);
+    constexpr wp_color_manager_v1_render_intent render_intents[] = {
+        WP_COLOR_MANAGER_V1_RENDER_INTENT_PERCEPTUAL,
+    };
+    const wlr_color_manager_v1_options options = {
+        .features =
+            {
+                .icc_v2_v4 = false,
+                .parametric = true,
+                .set_primaries = false,
+                .set_tf_power = false,
+                .set_luminances = false,
+                .set_mastering_display_primaries = true,
+                .extended_target_volume = false,
+                .windows_scrgb = false,
+            },
+        .render_intents = render_intents,
+        .render_intents_len = std::size(render_intents),
+        .transfer_functions = transfer_functions,
+        .transfer_functions_len = transfer_functions_length,
+        .primaries = primaries,
+        .primaries_len = primaries_length,
+    };
+    color_manager_ = wlr_color_manager_v1_create(display_, 2, &options);
+    std::free(transfer_functions);
+    std::free(primaries);
+    if (color_manager_ == nullptr) {
+      return Fail("Failed to create color-management manager");
+    }
+    wlr_scene_set_color_manager_v1(scene_, color_manager_);
+  } else {
+    ABSL_LOG(WARNING) << "Color management unavailable with this renderer";
+  }
+
   // Keep regular windows between desktop and shell layers.
   shell_layer_trees_[ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND] =
       wlr_scene_tree_create(&scene_->tree);
@@ -247,6 +368,11 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
   if (touch_feedback_ == nullptr) {
     ABSL_LOG(WARNING) << "Touch feedback QML is unavailable";
   }
+  session_lock_tree_ = wlr_scene_tree_create(&scene_->tree);
+  if (session_lock_tree_ == nullptr) {
+    return Fail("Failed to create the secure session-lock layer");
+  }
+  wlr_scene_node_set_enabled(&session_lock_tree_->node, false);
 
   scene_layout_ = wlr_scene_attach_output_layout(scene_, output_layout_);
   if (scene_layout_ == nullptr) {
@@ -298,7 +424,7 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
   if (!protocol_manager_->Create(
           display_, backend_, seat_, cursor_,
           shell_layer_trees_[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY],
-          output_layout_)) {
+          session_lock_tree_, output_layout_)) {
     return Fail("Failed to create desktop protocol globals!");
   }
 
@@ -573,7 +699,10 @@ void CompositorPrivate::Keyboard::OnModifiers(Keyboard* keyboard, void*) {
   if (keyboard->handle == nullptr) {
     return;
   }
-  if (keyboard->compositor->input_method_relay_ != nullptr) {
+  const bool session_locked =
+      keyboard->compositor->protocol_manager_ != nullptr &&
+      keyboard->compositor->protocol_manager_->SessionLocked();
+  if (!session_locked && keyboard->compositor->input_method_relay_ != nullptr) {
     wlr_input_method_keyboard_grab_v2* grab =
         keyboard->compositor->input_method_relay_->GrabForKeyboard(
             keyboard->handle);
@@ -601,12 +730,16 @@ void CompositorPrivate::Keyboard::OnKey(Keyboard* keyboard,
   const bool shortcuts_inhibited =
       keyboard->compositor->protocol_manager_ != nullptr &&
       keyboard->compositor->protocol_manager_->ShortcutsInhibited();
-  if (keyboard->compositor->key_binding_manager_ != nullptr &&
+  const bool session_locked =
+      keyboard->compositor->protocol_manager_ != nullptr &&
+      keyboard->compositor->protocol_manager_->SessionLocked();
+  if (!session_locked &&
+      keyboard->compositor->key_binding_manager_ != nullptr &&
       keyboard->compositor->key_binding_manager_->HandleKey(
           keyboard->handle, *event, shortcuts_inhibited)) {
     return;
   }
-  if (keyboard->compositor->input_method_relay_ != nullptr) {
+  if (!session_locked && keyboard->compositor->input_method_relay_ != nullptr) {
     wlr_input_method_keyboard_grab_v2* grab =
         keyboard->compositor->input_method_relay_->GrabForKeyboard(
             keyboard->handle);
@@ -1315,7 +1448,8 @@ view::Ssd::HitTarget CompositorPrivate::SsdHitAt(
 
 void CompositorPrivate::FocusToplevel(Toplevel* toplevel) {
   // Ignore windows which cannot receive focus.
-  if (toplevel == nullptr || !toplevel->mapped || !toplevel->IsAlive() ||
+  if ((protocol_manager_ != nullptr && protocol_manager_->SessionLocked()) ||
+      toplevel == nullptr || !toplevel->mapped || !toplevel->IsAlive() ||
       toplevel->Surface() == nullptr || !toplevel->WantsFocus()) {
     return;
   }
@@ -1380,6 +1514,9 @@ void CompositorPrivate::FocusToplevel(Toplevel* toplevel) {
 }
 
 void CompositorPrivate::FocusNextToplevel(Toplevel* excluding) {
+  if (protocol_manager_ != nullptr && protocol_manager_->SessionLocked()) {
+    return;
+  }
   // Exclusive shell layers have priority over regular windows.
   for (auto iterator = layer_surfaces_.rbegin();
        iterator != layer_surfaces_.rend(); ++iterator) {
@@ -1410,6 +1547,9 @@ void CompositorPrivate::FocusNextToplevel(Toplevel* excluding) {
 }
 
 void CompositorPrivate::CycleToplevel(bool reverse) {
+  if (protocol_manager_ != nullptr && protocol_manager_->SessionLocked()) {
+    return;
+  }
   std::vector<Toplevel*> candidates;
   for (const std::unique_ptr<Toplevel>& candidate : toplevels_) {
     if (candidate->mapped && !candidate->minimized && candidate->IsAlive() &&
@@ -1440,7 +1580,8 @@ void CompositorPrivate::CycleToplevel(bool reverse) {
 }
 
 void CompositorPrivate::FocusLayerSurface(LayerSurface* layer_surface) {
-  if (layer_surface == nullptr || !layer_surface->mapped ||
+  if ((protocol_manager_ != nullptr && protocol_manager_->SessionLocked()) ||
+      layer_surface == nullptr || !layer_surface->mapped ||
       layer_surface->handle == nullptr ||
       layer_surface->handle->current.keyboard_interactive ==
           ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE) {
@@ -1758,7 +1899,8 @@ void CompositorPrivate::EndInteractive() {
 void CompositorPrivate::BeginInteractive(Toplevel* toplevel, CursorMode mode,
                                          uint32_t edges) {
   // Unmapped windows cannot begin pointer grabs.
-  if (toplevel == nullptr || !toplevel->mapped ||
+  if ((protocol_manager_ != nullptr && protocol_manager_->SessionLocked()) ||
+      toplevel == nullptr || !toplevel->mapped ||
       toplevel->scene_tree == nullptr) {
     return;
   }
@@ -1886,6 +2028,7 @@ void CompositorPrivate::OnCursorMotion(CompositorPrivate* compositor,
   double delta_y = event->delta_y;
   if (compositor->protocol_manager_ != nullptr) {
     compositor->protocol_manager_->NotifyPointer(event->time_msec);
+    compositor->protocol_manager_->SendRelativeMotion(*event);
     compositor->protocol_manager_->ConfinePointer(&delta_x, &delta_y);
   }
   wlr_cursor_move(compositor->cursor_, &event->pointer->base, delta_x, delta_y);
@@ -1931,6 +2074,12 @@ void CompositorPrivate::OnCursorButton(CompositorPrivate* compositor,
   }
   if (compositor->protocol_manager_ != nullptr) {
     compositor->protocol_manager_->NotifyPointer(event->time_msec);
+  }
+  if (compositor->protocol_manager_ != nullptr &&
+      compositor->protocol_manager_->SessionLocked()) {
+    wlr_seat_pointer_notify_button(compositor->seat_, event->time_msec,
+                                   event->button, event->state);
+    return;
   }
   // WLR mouse release event.
   if (event->state == WL_POINTER_BUTTON_STATE_RELEASED) {
@@ -2637,6 +2786,7 @@ void CompositorPrivate::Destroy() {
     scene_layout_ = nullptr;
     shell_layer_trees_.fill(nullptr);
     toplevel_tree_ = nullptr;
+    session_lock_tree_ = nullptr;
   }
 
   // Clear cursor manager.
@@ -2672,6 +2822,10 @@ void CompositorPrivate::Destroy() {
     wl_display_destroy(display_);
     display_ = nullptr;
     compositor_ = nullptr;
+    security_context_manager_ = nullptr;
+    explicit_sync_manager_ = nullptr;
+    gamma_control_manager_ = nullptr;
+    color_manager_ = nullptr;
     layer_shell_ = nullptr;
     virtual_keyboard_manager_ = nullptr;
     xdg_shell_ = nullptr;

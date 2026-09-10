@@ -34,15 +34,20 @@
 
 | 协议名称                          | 支持情况 | 说明                         |
 | :-------------------------------- | :------: | :--------------------------- |
+| wp_color_manager_v1               |    2     | 依渲染器能力提供颜色/HDR 元数据 |
 | wp_content_type_manager_v1        |    no    | 1                            |
 | wp_cursor_shape_manager_v1        |    no    | 1                            |
 | wp_drm_lease_device_v1            |    no    | 1                            |
-| ext_foreign_toplevel_list_v1      |    no    | 1                            |
+| ext_foreign_toplevel_list_v1      |    1     | Portal 窗口选择              |
+| ext_foreign_toplevel_image_capture_source_manager_v1 | 1 | Portal 窗口捕获源 |
+| ext_image_copy_capture_manager_v1 |    1     | Portal/PipeWire 捕获         |
 | ext_idle_notifier_v1              |    2     |                              |
-| ext_session_lock_manager_v1       |    no    | 1                            |
+| ext_output_image_capture_source_manager_v1 | 1 | Portal 输出捕获源 |
+| ext_session_lock_manager_v1       |    1     | 安全失败关闭锁屏             |
 | ext_transient_seat_manager_v1     |    1     |                              |
 | wp_fractional_scale_manager_v1    |    1     |                              |
-| wp_security_context_manager_v1    |    no    | 1                            |
+| wp_linux_drm_syncobj_manager_v1   |    1     | 渲染器和后端支持 timeline 时发布 |
+| wp_security_context_manager_v1    |    1     | 沙箱客户端 global 过滤        |
 | wp_single_pixel_buffer_manager_v1 |    no    | 1                            |
 | wp_tearing_control_manager_v1     |    1     |                              |
 | xdg_activation_v1                 |    1     |                              |
@@ -60,11 +65,11 @@
 | zwp_input_timestamps_manager_v1           |    1     |                                   |
 | zwp_keyboard_shortcuts_inhibit_manager_v1 |    1     |                                   |
 | zwp_linux_dmabuf_v1                       |    4     | 渲染器支持 DMA-BUF 时发布         |
-| zwp_linux_explicit_synchronization_v1     |    no    | 2                                 |
+| zwp_linux_explicit_synchronization_v1     |    no    | 旧协议，改用 linux-drm-syncobj-v1 |
 | zwp_pointer_constraints_v1                |    1     |                                   |
 | zwp_pointer_gestures_v1                   |    3     |                                   |
 | zwp_primary_selection_device_manager_v1   |    1     |                                   |
-| zwp_relative_pointer_manager_v1           |    no    | 1                                 |
+| zwp_relative_pointer_manager_v1           |    1     | 为锁定指针提供原始移动量          |
 | zwp_tablet_manager_v1                     |    no    | deprecated，使用 tablet v2        |
 | zwp_tablet_manager_v2                     |    1     |                                   |
 | zwp_text_input_v1                         |    1     |                                   |
@@ -86,13 +91,18 @@
 | zwlr_data_control_manager_v1     |    2     |            |
 | zwlr_export_dmabuf_manager_v1    |    1     |            |
 | zwlr_foreign_toplevel_manager_v1 |    3     |            |
-| zwlr_gamma_control_manager_v1    |    no    | 1          |
+| zwlr_gamma_control_manager_v1    |    1     | 对 security-context 客户端隐藏 |
 | zwlr_input_inhibit_manager_v1    |    no    | deprecated |
 | zwlr_layer_shell_v1              |    4     |            |
 | zwlr_output_manager_v1           |    4     |            |
 | zwlr_output_power_manager_v1     |    1     |            |
 | zwlr_screencopy_manager_v1       |    3     |            |
 | zwlr_virtual_pointer_v1          |    2     |            |
+
+security-context 客户端只能看到经过审核的普通应用协议。屏幕捕获、虚拟输入、
+输出控制、会话锁、输入法、Layer Shell、窗口枚举、Data Control 和 Gamma
+Control 等敏感 global 均被隐藏；通过合成器常规 socket 连接的可信桌面服务仍可
+使用完整协议集合。
 
 ## kde
 

@@ -333,6 +333,10 @@ class CompositorPrivate final {
   wlr_renderer* renderer_ = nullptr;
   wlr_allocator* allocator_ = nullptr;
   wlr_compositor* compositor_ = nullptr;
+  wlr_security_context_manager_v1* security_context_manager_ = nullptr;
+  wlr_linux_drm_syncobj_manager_v1* explicit_sync_manager_ = nullptr;
+  wlr_gamma_control_manager_v1* gamma_control_manager_ = nullptr;
+  wlr_color_manager_v1* color_manager_ = nullptr;
   wlr_output_layout* output_layout_ = nullptr;
   wlr_scene* scene_ = nullptr;
   wlr_scene_output_layout* scene_layout_ = nullptr;
@@ -351,6 +355,7 @@ class CompositorPrivate final {
   wlr_xcursor_manager* cursor_manager_ = nullptr;
   std::array<wlr_scene_tree*, 4> shell_layer_trees_ = {};
   wlr_scene_tree* toplevel_tree_ = nullptr;
+  wlr_scene_tree* session_lock_tree_ = nullptr;
 
   utils::SignalListener<CompositorPrivate, wlr_output> new_output_{this,
                                                                    OnNewOutput};

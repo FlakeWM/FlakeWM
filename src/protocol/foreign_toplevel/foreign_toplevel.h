@@ -39,6 +39,7 @@ class ForeignToplevel final {
  public:
   ForeignToplevel(ProtocolManager* manager,
                   wlr_foreign_toplevel_manager_v1* foreign_manager,
+                  wlr_ext_foreign_toplevel_list_v1* ext_foreign_list,
                   wlr_surface* surface);
   ~ForeignToplevel();
 
@@ -47,6 +48,11 @@ class ForeignToplevel final {
 
   wlr_surface* Surface() const;
   wlr_foreign_toplevel_handle_v1* Handle() const;
+  wlr_ext_foreign_toplevel_handle_v1* ExtHandle() const;
+  wlr_ext_image_capture_source_v1* CaptureSource(wlr_scene_node* node,
+                                                 wl_event_loop* event_loop,
+                                                 wlr_allocator* allocator,
+                                                 wlr_renderer* renderer);
   bool IsValid() const;
   void SetTitle(const char* title);
   void SetAppId(const char* app_id);
@@ -73,10 +79,14 @@ class ForeignToplevel final {
   static void OnRequestClose(ForeignToplevel* foreign, void*);
   static void OnOutputDestroy(ForeignToplevel* foreign, void*);
   static void OnDestroy(ForeignToplevel* foreign, void*);
+  static void OnExtDestroy(ForeignToplevel* foreign, void*);
+  static void OnCaptureSourceDestroy(ForeignToplevel* foreign, void*);
 
   ProtocolManager* manager_;
   wlr_surface* surface_;
   wlr_foreign_toplevel_handle_v1* handle_;
+  wlr_ext_foreign_toplevel_handle_v1* ext_handle_ = nullptr;
+  wlr_ext_image_capture_source_v1* capture_source_ = nullptr;
   wlr_output* output_ = nullptr;
   utils::SignalListener<ForeignToplevel,
                         wlr_foreign_toplevel_handle_v1_maximized_event>
@@ -95,6 +105,9 @@ class ForeignToplevel final {
   utils::SignalListener<ForeignToplevel, void> output_destroy_{this,
                                                                OnOutputDestroy};
   utils::SignalListener<ForeignToplevel, void> destroy_{this, OnDestroy};
+  utils::SignalListener<ForeignToplevel, void> ext_destroy_{this, OnExtDestroy};
+  utils::SignalListener<ForeignToplevel, void> capture_source_destroy_{
+      this, OnCaptureSourceDestroy};
 };
 
 }  // namespace protocol
