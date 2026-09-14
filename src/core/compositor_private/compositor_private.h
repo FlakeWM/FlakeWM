@@ -47,6 +47,7 @@ class BackdropBlurRenderer;
 }  // namespace render
 
 namespace protocol {
+class GxdeProtocolManager;
 class KdeOutputManager;
 class KdeProtocolManager;
 class UkuiProtocolManager;
@@ -63,6 +64,7 @@ namespace core {
 
 class CompositorPrivate final {
   friend class LayerSurface;
+  friend class protocol::GxdeProtocolManager;
   friend class protocol::KdeOutputManager;
   friend class protocol::KdeProtocolManager;
   friend class protocol::ProtocolManager;

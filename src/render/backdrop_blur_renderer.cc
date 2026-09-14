@@ -22,6 +22,8 @@
 
 #include <GLES2/gl2.h>
 
+#include "src/wlr_wrapper/color.h"
+
 extern "C" {
 #include <wlr/render/drm_syncobj.h>
 #include <wlr/render/egl.h>
@@ -44,7 +46,6 @@ extern "C" {
 
 #include "absl/log/absl_log.h"
 #include "src/render/backdrop_blur_renderer.h"
-#include "src/wlr_wrapper/color.h"
 #include "src/render/vulkan_blur_pipeline.h"
 
 namespace flakewm {

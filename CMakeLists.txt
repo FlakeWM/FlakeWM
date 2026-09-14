@@ -115,6 +115,22 @@ foreach(protocol IN ITEMS
   list(APPEND FLAKEWM_KDE_PROTOCOLS ${FLAKEWM_${protocol_variable}_PROTOCOL})
 endforeach()
 
+# GXDE-native protocols, kept at the exact revisions implemented by the
+# server-side compatibility manager.
+foreach(protocol IN ITEMS
+    gxde-identifier-v1
+    gxde-screenshot-v1
+  )
+  string(REPLACE "-" "_" protocol_variable "${protocol}")
+  string(TOUPPER "${protocol_variable}" protocol_variable)
+  flakewm_generate_server_protocol(
+    "FLAKEWM_${protocol_variable}_PROTOCOL"
+    "${CMAKE_CURRENT_SOURCE_DIR}/protocols/${protocol}.xml"
+    "${protocol}"
+  )
+  list(APPEND FLAKEWM_GXDE_PROTOCOLS ${FLAKEWM_${protocol_variable}_PROTOCOL})
+endforeach()
+
 # UKUI compatibility protocols, kept in-tree at the revisions implemented by
 # the server-side compatibility manager.
 foreach(protocol IN ITEMS
@@ -155,6 +171,9 @@ set(flakewm_CXX_SOURCES
   src/render/vulkan_blur_pipeline.cc
   src/view/touch_feedback.cc
   src/protocol/foreign_toplevel/foreign_toplevel.cc
+  src/protocol/gxde/gxde_identifier.cc
+  src/protocol/gxde/gxde_protocol_manager.cc
+  src/protocol/gxde/gxde_screenshot.cc
   src/protocol/input_method/input_method_popup.cc
   src/protocol/input_method/input_method_relay.cc
   src/protocol/layer_shell/layer_surface.cc
@@ -195,6 +214,7 @@ add_executable(flakewm
   ${FLAKEWM_TEXT_INPUT_V2_PROTOCOL}
   ${FLAKEWM_INPUT_TIMESTAMPS_V1_PROTOCOL}
   ${FLAKEWM_XDG_TOPLEVEL_DRAG_V1_PROTOCOL}
+  ${FLAKEWM_GXDE_PROTOCOLS}
   ${FLAKEWM_KDE_PROTOCOLS}
   ${FLAKEWM_UKUI_PROTOCOLS}
   src/wlr_wrapper/wlroots.h
@@ -215,6 +235,8 @@ add_executable(flakewm
   src/render/vulkan_blur_pipeline.h
   src/view/touch_feedback.h
   src/protocol/foreign_toplevel/foreign_toplevel.h
+  src/protocol/gxde/gxde_protocol_manager.h
+  src/protocol/gxde/gxde_protocol_manager_internal.h
   src/protocol/input_method/input_method_popup.h
   src/protocol/input_method/input_method_relay.h
   src/protocol/layer_shell/layer_surface.h

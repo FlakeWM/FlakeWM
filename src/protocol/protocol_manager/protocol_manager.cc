@@ -321,6 +321,8 @@ bool ProtocolManager::Create(wl_display* display, wlr_backend* backend,
   session_lock_manager_ = wlr_session_lock_manager_v1_create(display);
   input_timestamps_ = std::make_unique<InputTimestampsManager>(display);
   toplevel_drag_manager_ = std::make_unique<ToplevelDragManager>(display);
+  gxde_protocols_ = std::make_unique<GxdeProtocolManager>(compositor_, this);
+  const bool gxde_valid = gxde_protocols_->Create(display);
   kde_protocols_ = std::make_unique<KdeProtocolManager>(compositor_);
   const bool kde_valid =
       kde_protocols_->Create(display, backend, seat, output_layout);
@@ -334,7 +336,8 @@ bool ProtocolManager::Create(wl_display* display, wlr_backend* backend,
       foreign_manager_ == nullptr || output_manager_ == nullptr ||
       output_power_manager_ == nullptr || session_lock_manager_ == nullptr ||
       session_lock_parent_ == nullptr || !input_timestamps_->IsValid() ||
-      !toplevel_drag_manager_->IsValid() || !kde_valid || !ukui_valid) {
+      !toplevel_drag_manager_->IsValid() || !gxde_valid || !kde_valid ||
+      !ukui_valid) {
     return false;
   }
 

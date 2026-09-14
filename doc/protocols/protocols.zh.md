@@ -167,10 +167,12 @@ Control 等敏感 global 均被隐藏；通过合成器常规 socket 连接的�
 
 ## gxwm
 
+> https://github.com/GXDE-OS/gxde-wlcom
+
 | 协议名称             | 支持情况 | 说明 |
 | :------------------- | :------: | :--- |
-| gxde-identifier-v1   |    no    | 1    |
-| gxde-screenshot-v1   |    no    | 1    |
+| gxde_identifier_v1          |    1     | 标识 FlakeWM 并报告版本 |
+| gxde_screenshot_manager_v1  |    1     | 支持输出、区域、窗口与缩略图捕获 |
 
 ## ukui
 

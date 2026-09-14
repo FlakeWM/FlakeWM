@@ -167,10 +167,12 @@ regular socket retain the complete registry.
 
 ## gxwm
 
+> https://github.com/GXDE-OS/gxde-wlcom
+
 | Name             | Version Supported | Note |
 | :------------------- | :------: | :--- |
-| gxde-identifier-v1   |    no    | 1    |
-| gxde-screenshot-v1   |    no    | 1    |
+| gxde_identifier_v1          |    1     | Identifies FlakeWM and reports its version |
+| gxde_screenshot_manager_v1  |    1     | Output, region, window, and thumbnail capture |
 
 ## ukui
 

@@ -31,6 +31,7 @@
 
 #include "src/input/touchpad_manager.h"
 #include "src/protocol/foreign_toplevel/foreign_toplevel.h"
+#include "src/protocol/gxde/gxde_protocol_manager.h"
 #include "src/protocol/input_timestamps/input_timestamps_manager.h"
 #include "src/protocol/kde/kde_protocol_manager.h"
 #include "src/protocol/toplevel_drag/toplevel_drag_manager.h"
@@ -90,6 +91,7 @@ class ProtocolManager final {
   void RequestClose(wlr_surface* surface);
 
  private:
+  friend class GxdeProtocolManager;
   static void OnNewVirtualPointer(
       ProtocolManager* manager,
       wlr_virtual_pointer_v1_new_pointer_event* event);
@@ -194,6 +196,7 @@ class ProtocolManager final {
   std::unique_ptr<SessionLockState> session_lock_;
   bool session_locked_ = false;
   std::unique_ptr<InputTimestampsManager> input_timestamps_;
+  std::unique_ptr<GxdeProtocolManager> gxde_protocols_;
   std::unique_ptr<KdeProtocolManager> kde_protocols_;
   std::unique_ptr<UkuiProtocolManager> ukui_protocols_;
   std::unique_ptr<ToplevelDragManager> toplevel_drag_manager_;
