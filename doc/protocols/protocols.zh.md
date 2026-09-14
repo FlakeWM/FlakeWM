@@ -111,26 +111,26 @@ Control 等敏感 global 均被隐藏；通过合成器常规 socket 连接的�
 | 协议名称                                       | 支持情况 | 说明       |
 | :--------------------------------------------- | :------: | :--------- |
 | org_kde_kwin_appmenu_manager                   |    no    | 2          |
-| org_kde_kwin_blur_manager                      |    no    | 1，ukui    |
+| org_kde_kwin_blur_manager                      |    1     | FlakeWM 自有 GLES2 与 Vulkan 背景模糊，支持区域与强度 |
 | org_kde_kwin_contrast_manager                  |    no    | 2          |
-| org_kde_kwin_dpms_manager                      |    no    | 1          |
+| org_kde_kwin_dpms_manager                      |    1     |            |
 | org_kde_kwin_fake_input                        |    no    | 5          |
-| org_kde_kwin_idle                              |    no    | 1          |
+| org_kde_kwin_idle                              |    1     |            |
 | kde_lockscreen_overlay_v1                      |    no    | 1          |
-| kde_output_device_v2                           |    no    | 6          |
-| kde_output_management_v2                       |    no    | 7          |
+| kde_output_device_v2                           |    2     | 6          |
+| kde_output_management_v2                       |    2     | 7          |
 | kde_output_order_v1                            |    no    | 1          |
-| kde_primary_output_v1                          |    no    | 2          |
+| kde_primary_output_v1                          |    2     |            |
 | kde_screen_edge_manager_v1                     |    no    | 1          |
-| org_kde_kwin_keystate                          |    no    | 4          |
-| org_kde_plasma_virtual_desktop_management      |    no    | 2          |
-| org_kde_kwin_outputmanagement                  |    no    | 4，使用 v2 |
-| org_kde_kwin_outputdevice                      |    no    | 4，使用 v2 |
-| org_kde_plasma_shell                           |    no    | 6，ukui    |
-| org_kde_plasma_window_management               |    no    | 16         |
+| org_kde_kwin_keystate                          |    4     |            |
+| org_kde_plasma_virtual_desktop_management      |    2     | 单桌面模型 |
+| org_kde_kwin_outputmanagement                  |    -     | 4，使用 v2 |
+| org_kde_kwin_outputdevice                      |    -     | 4，使用 v2 |
+| org_kde_plasma_shell                           |    6     | ukui       |
+| org_kde_plasma_window_management               |    16    |            |
 | org_kde_kwin_remote_access_manager             |    no    | 1          |
 | org_kde_kwin_server_decoration_palette_manager |    no    | 1          |
-| org_kde_kwin_server_decoration_manager         |    no    | 1          |
+| org_kde_kwin_server_decoration_manager         |    1     |            |
 | org_kde_kwin_shadow_manager                    |    no    | 2          |
 | org_kde_kwin_slide_manager                     |    no    | 1          |
 | zkde_screencast_unstable_v1                    |    no    | 3          |

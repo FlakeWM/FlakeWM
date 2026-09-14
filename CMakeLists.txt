@@ -90,6 +90,31 @@ flakewm_generate_server_protocol(
   xdg-toplevel-drag-v1
 )
 
+# KDE/Plasma compatibility protocols.  These XML files are kept in-tree so
+# the compositor advertises exactly the interface revisions implemented below,
+# independently of the plasma-wayland-protocols version installed by a distro.
+foreach(protocol IN ITEMS
+    blur
+    dpms
+    idle
+    kde-keystate
+    kde-output-device-v2
+    kde-output-management-v2
+    kde-primary-output-v1
+    plasma-shell
+    plasma-virtual-desktop
+    plasma-window-management
+  )
+  string(REPLACE "-" "_" protocol_variable "${protocol}")
+  string(TOUPPER "${protocol_variable}" protocol_variable)
+  flakewm_generate_server_protocol(
+    "FLAKEWM_${protocol_variable}_PROTOCOL"
+    "${CMAKE_CURRENT_SOURCE_DIR}/protocols/${protocol}.xml"
+    "${protocol}"
+  )
+  list(APPEND FLAKEWM_KDE_PROTOCOLS ${FLAKEWM_${protocol_variable}_PROTOCOL})
+endforeach()
+
 add_executable(flakewm-xwayland
   src/xwayland/server/server.cc
 )
@@ -108,12 +133,17 @@ set(flakewm_CXX_SOURCES
   src/input/key_binding_manager.cc
   src/input/shortcut_settings_service.cc
   src/input/touchpad_manager.cc
+  src/render/backdrop_blur_renderer.cc
+  src/render/vulkan_blur_pipeline.cc
   src/view/touch_feedback.cc
   src/protocol/foreign_toplevel/foreign_toplevel.cc
   src/protocol/input_method/input_method_popup.cc
   src/protocol/input_method/input_method_relay.cc
   src/protocol/layer_shell/layer_surface.cc
   src/protocol/input_timestamps/input_timestamps_manager.cc
+  src/protocol/kde/kde_idle_manager.cc
+  src/protocol/kde/kde_output_manager.cc
+  src/protocol/kde/kde_protocol_manager.cc
   src/protocol/protocol_manager/protocol_manager.cc
   src/protocol/text_input/text_input.cc
   src/protocol/text_input/text_input_v1.cc
@@ -142,6 +172,7 @@ add_executable(flakewm
   ${FLAKEWM_TEXT_INPUT_V2_PROTOCOL}
   ${FLAKEWM_INPUT_TIMESTAMPS_V1_PROTOCOL}
   ${FLAKEWM_XDG_TOPLEVEL_DRAG_V1_PROTOCOL}
+  ${FLAKEWM_KDE_PROTOCOLS}
   src/wlr_wrapper/wlroots.h
   src/wlr_wrapper/color.h
   src/wlr_wrapper/scene.h
@@ -156,12 +187,17 @@ add_executable(flakewm
   src/input/key_binding_manager.h
   src/input/shortcut_settings_service.h
   src/input/touchpad_manager.h
+  src/render/backdrop_blur_renderer.h
+  src/render/vulkan_blur_pipeline.h
   src/view/touch_feedback.h
   src/protocol/foreign_toplevel/foreign_toplevel.h
   src/protocol/input_method/input_method_popup.h
   src/protocol/input_method/input_method_relay.h
   src/protocol/layer_shell/layer_surface.h
   src/protocol/input_timestamps/input_timestamps_manager.h
+  src/protocol/kde/kde_idle_manager.h
+  src/protocol/kde/kde_output_manager.h
+  src/protocol/kde/kde_protocol_manager.h
   src/protocol/protocol_manager/protocol_manager.h
   src/protocol/text_input/text_input.h
   src/protocol/text_input/text_input_v1.h

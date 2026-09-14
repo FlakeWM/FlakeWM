@@ -43,6 +43,7 @@
 #include <utility>
 #include <vector>
 
+#include "src/render/backdrop_blur_renderer.h"
 #include "src/utils/args_handler/args_handler.h"
 #include "src/utils/misc/misc.h"
 #include "src/xwayland/xwayland_manager/xwayland_manager.h"
@@ -51,7 +52,7 @@ namespace flakewm {
 namespace core {
 namespace {
 
-constexpr std::size_t kMaximumClientBufferSize = 1024 * 1024;
+constexpr std::size_t kMaximumClientBufferSize = std::size_t{1024} * 1024;
 constexpr uint32_t kXdgShellVersion = 5;
 constexpr uint32_t kLayerShellVersion = 4;
 constexpr uint32_t kDoubleClickIntervalMs = 400;
@@ -121,7 +122,8 @@ wlr_renderer* CreateRenderer(wlr_backend* backend) {
     return wlr_renderer_autocreate(backend);
   }
 
-  // Vulkan is the normal path; GLES2 keeps unsupported GPUs usable.
+  // Vulkan is the normal path and supports compositor-owned backdrop blur;
+  // GLES2 keeps unsupported GPUs usable.
   if (setenv("WLR_RENDERER", "vulkan", 1) == 0) {
     if (wlr_renderer* renderer = wlr_renderer_autocreate(backend);
         renderer != nullptr) {
@@ -228,10 +230,14 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
   backend_ = backend_owner_->Handle();
 
   // Prepare renderer and allocator for output buffers.
-  renderer_ = CreateRenderer(backend_);
-  if (renderer_ == nullptr) {
+  wlr_renderer* renderer = CreateRenderer(backend_);
+  if (renderer == nullptr) {
     return Fail("Failed to create Wlroots renderer.");
   }
+  backdrop_blur_renderer_ = render::BackdropBlurRenderer::Create(renderer);
+  renderer_ = backdrop_blur_renderer_ == nullptr
+                  ? renderer
+                  : backdrop_blur_renderer_->Handle();
 
   if (!wlr_renderer_init_wl_display(renderer_, display_)) {
     return Fail("Failed to initialize renderer globals.");
@@ -254,6 +260,9 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
   allocator_ = wlr_allocator_autocreate(backend_, renderer_);
   if (allocator_ == nullptr) {
     return Fail("Failed to create wlroots allocator.");
+  }
+  if (backdrop_blur_renderer_ != nullptr) {
+    backdrop_blur_renderer_->SetAllocator(allocator_);
   }
 
   // Publish basic globals required by regular Wayland clients.
@@ -300,6 +309,9 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
   if (scene_ == nullptr) {
     return Fail("Failed to create scene graph");
   }
+  scene_direct_scanout_default_ = scene_->WLR_PRIVATE.direct_scanout;
+  scene_calculate_visibility_default_ =
+      scene_->WLR_PRIVATE.calculate_visibility;
 
   gamma_control_manager_ = wlr_gamma_control_manager_v1_create(display_);
   if (gamma_control_manager_ == nullptr) {
@@ -546,6 +558,41 @@ void CompositorPrivate::Stop() {
   }
 }
 
+void CompositorPrivate::DamageOutputForBackdropBlur(Output* output,
+                                                    bool schedule_frame) {
+  if (output == nullptr || output->handle == nullptr ||
+      output->scene_output == nullptr || output->handle->width <= 0 ||
+      output->handle->height <= 0) {
+    return;
+  }
+  pixman_region32_t damage;
+  pixman_region32_init_rect(&damage, 0, 0, output->handle->width,
+                            output->handle->height);
+  wlr_damage_ring_add(&output->scene_output->damage_ring, &damage);
+  pixman_region32_union(
+      &output->scene_output->WLR_PRIVATE.pending_commit_damage,
+      &output->scene_output->WLR_PRIVATE.pending_commit_damage, &damage);
+  pixman_region32_fini(&damage);
+  if (schedule_frame) {
+    wlr_output_schedule_frame(output->handle);
+  }
+}
+
+void CompositorPrivate::UpdateBackdropBlurState() {
+  if (scene_ == nullptr) {
+    return;
+  }
+  const bool active = backdrop_blur_renderer_ != nullptr &&
+                      backdrop_blur_renderer_->HasActiveBlur();
+  scene_->WLR_PRIVATE.direct_scanout =
+      active ? false : scene_direct_scanout_default_;
+  scene_->WLR_PRIVATE.calculate_visibility =
+      active ? false : scene_calculate_visibility_default_;
+  for (const std::unique_ptr<Output>& output : outputs_) {
+    DamageOutputForBackdropBlur(output.get(), true);
+  }
+}
+
 CompositorPrivate::Output::Output(CompositorPrivate* compositor,
                                   wlr_output* output)
     : compositor(compositor),
@@ -605,6 +652,10 @@ void CompositorPrivate::Output::OnFrame(Output* output, void*) {
   // Commit the scene for this output when a new frame is requested.
   if (output->scene_output == nullptr) {
     return;
+  }
+  if (output->compositor->backdrop_blur_renderer_ != nullptr &&
+      output->compositor->backdrop_blur_renderer_->HasActiveBlur()) {
+    output->compositor->DamageOutputForBackdropBlur(output, false);
   }
 
   Toplevel* focused = output->compositor->ToplevelForSurface(
@@ -2803,6 +2854,9 @@ void CompositorPrivate::Destroy() {
 
   // Release allocator.
   if (allocator_ != nullptr) {
+    if (backdrop_blur_renderer_ != nullptr) {
+      backdrop_blur_renderer_->SetAllocator(nullptr);
+    }
     wlr_allocator_destroy(allocator_);
     allocator_ = nullptr;
   }
@@ -2812,6 +2866,7 @@ void CompositorPrivate::Destroy() {
     wlr_renderer_destroy(renderer_);
     renderer_ = nullptr;
   }
+  backdrop_blur_renderer_.reset();
 
   // Clear Wlroots display backends.
   backend_owner_.reset();

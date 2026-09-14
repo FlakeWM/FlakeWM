@@ -321,6 +321,9 @@ bool ProtocolManager::Create(wl_display* display, wlr_backend* backend,
   session_lock_manager_ = wlr_session_lock_manager_v1_create(display);
   input_timestamps_ = std::make_unique<InputTimestampsManager>(display);
   toplevel_drag_manager_ = std::make_unique<ToplevelDragManager>(display);
+  kde_protocols_ = std::make_unique<KdeProtocolManager>(compositor_);
+  const bool kde_valid =
+      kde_protocols_->Create(display, backend, seat, output_layout);
   if (idle_notifier_ == nullptr || idle_inhibit_manager_ == nullptr ||
       shortcuts_manager_ == nullptr || pointer_constraints_ == nullptr ||
       relative_pointer_manager_ == nullptr || pointer_gestures_ == nullptr ||
@@ -329,7 +332,7 @@ bool ProtocolManager::Create(wl_display* display, wlr_backend* backend,
       foreign_manager_ == nullptr || output_manager_ == nullptr ||
       output_power_manager_ == nullptr || session_lock_manager_ == nullptr ||
       session_lock_parent_ == nullptr || !input_timestamps_->IsValid() ||
-      !toplevel_drag_manager_->IsValid()) {
+      !toplevel_drag_manager_->IsValid() || !kde_valid) {
     return false;
   }
 
@@ -364,6 +367,7 @@ bool ProtocolManager::Create(wl_display* display, wlr_backend* backend,
 }
 
 void ProtocolManager::AddInput(wlr_input_device* device) {
+  kde_protocols_->AddInput(device);
   touchpad_manager_->AddDevice(device);
   if (device->type == WLR_INPUT_DEVICE_TABLET) {
     wlr_tablet* tablet = wlr_tablet_from_input_device(device);
@@ -381,6 +385,7 @@ void ProtocolManager::AddInput(wlr_input_device* device) {
 }
 
 void ProtocolManager::AddOutput(wlr_output* output) {
+  kde_protocols_->AddOutput(output);
   if (session_lock_ != nullptr) {
     session_lock_->AddOutput(output);
   }
@@ -413,12 +418,14 @@ void ProtocolManager::UpdateOutputs() {
     head->state.y = box.y;
   }
   wlr_output_manager_v1_set_configuration(output_manager_, configuration);
+  kde_protocols_->UpdateOutputs();
   UpdateSessionLockGeometry();
 }
 
 void ProtocolManager::NotifyKeyboard(uint32_t time_msec) {
   UpdateIdleInhibition();
   wlr_idle_notifier_v1_notify_activity(idle_notifier_, seat_);
+  kde_protocols_->NotifyActivity();
   wl_client* client =
       seat_->keyboard_state.focused_surface == nullptr
           ? nullptr
@@ -430,6 +437,7 @@ void ProtocolManager::NotifyKeyboard(uint32_t time_msec) {
 void ProtocolManager::NotifyPointer(uint32_t time_msec) {
   UpdateIdleInhibition();
   wlr_idle_notifier_v1_notify_activity(idle_notifier_, seat_);
+  kde_protocols_->NotifyActivity();
   wl_client* client = seat_->pointer_state.focused_surface == nullptr
                           ? nullptr
                           : wl_resource_get_client(
@@ -451,6 +459,7 @@ void ProtocolManager::SendRelativeMotion(
 void ProtocolManager::NotifyTouch(wlr_surface* surface, uint32_t time_msec) {
   UpdateIdleInhibition();
   wlr_idle_notifier_v1_notify_activity(idle_notifier_, seat_);
+  kde_protocols_->NotifyActivity();
   wl_client* client =
       surface == nullptr ? nullptr : wl_resource_get_client(surface->resource);
   input_timestamps_->SendTouch(client, time_msec);
@@ -571,6 +580,7 @@ void ProtocolManager::MapToplevel(wlr_surface* surface, const char* title,
   if (surface == nullptr || FindForeign(surface) != nullptr) {
     return;
   }
+  kde_protocols_->MapToplevel(surface);
   auto foreign = std::make_unique<ForeignToplevel>(this, foreign_manager_,
                                                    ext_foreign_list_, surface);
   if (!foreign->IsValid()) {
@@ -583,6 +593,7 @@ void ProtocolManager::MapToplevel(wlr_surface* surface, const char* title,
 }
 
 void ProtocolManager::UnmapToplevel(wlr_surface* surface) {
+  kde_protocols_->UnmapToplevel(surface);
   for (auto iterator = foreign_toplevels_.begin();
        iterator != foreign_toplevels_.end(); ++iterator) {
     if ((*iterator)->Surface() == surface) {
@@ -595,6 +606,7 @@ void ProtocolManager::UnmapToplevel(wlr_surface* surface) {
 }
 
 void ProtocolManager::UpdateToplevel(wlr_surface* surface) {
+  kde_protocols_->UpdateToplevel(surface);
   ForeignToplevel* foreign = FindForeign(surface);
   core::CompositorPrivate::Toplevel* toplevel =
       compositor_->ToplevelForSurface(surface);
@@ -620,6 +632,7 @@ void ProtocolManager::UpdateToplevel(wlr_surface* surface) {
 
 void ProtocolManager::UpdateToplevelParent(wlr_surface* surface,
                                            wlr_surface* parent) {
+  kde_protocols_->UpdateToplevelParent(surface, parent);
   ForeignToplevel* foreign = FindForeign(surface);
   ForeignToplevel* foreign_parent = FindForeign(parent);
   if (foreign != nullptr) {

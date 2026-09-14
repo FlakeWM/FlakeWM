@@ -20,12 +20,14 @@
  */
 
 #include <absl/log/absl_log.h>
+#include <pthread.h>
 
 #include <QByteArray>
 #include <QGuiApplication>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
 #include <csignal>
+#include <cstdio>
 #include <cstdlib>
 #include <exception>
 
@@ -35,6 +37,19 @@
 
 int main(int argc, char* argv[]) {
   static_cast<void>(argc);
+
+  // Block termination signals before Qt or any other library create threads.
+  // Wayland event loop consumes them through signalfd.
+  // Blocking them later will leave pre-existing threads able to terminate the
+  // process without running destruction.
+  sigset_t termination_signals;
+  sigemptyset(&termination_signals);
+  sigaddset(&termination_signals, SIGINT);
+  sigaddset(&termination_signals, SIGTERM);
+  if (pthread_sigmask(SIG_BLOCK, &termination_signals, nullptr) != 0) {
+    std::fputs("Failed to block WM termination signals!\n", stderr);
+    return EXIT_FAILURE;
+  }
 
   // A compositor must NOT terminate when a cilent disappears while data
   // is still being processed in its sockets.

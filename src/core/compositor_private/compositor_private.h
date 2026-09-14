@@ -42,6 +42,15 @@
 #include "src/wlr_wrapper/wlroots.h"
 
 namespace flakewm {
+namespace render {
+class BackdropBlurRenderer;
+}  // namespace render
+
+namespace protocol {
+class KdeOutputManager;
+class KdeProtocolManager;
+}  // namespace protocol
+
 namespace xwayland {
 
 class XSurface;
@@ -53,6 +62,8 @@ namespace core {
 
 class CompositorPrivate final {
   friend class LayerSurface;
+  friend class protocol::KdeOutputManager;
+  friend class protocol::KdeProtocolManager;
   friend class protocol::ProtocolManager;
   friend class xwayland::XSurface;
   friend class xwayland::XWaylandManager;
@@ -322,6 +333,8 @@ class CompositorPrivate final {
   bool ConfigureBackendEnvironment(
       const utils::StartupArgs& startup_args) const;
   bool RegisterDefaultKeyBindings();
+  void UpdateBackdropBlurState();
+  void DamageOutputForBackdropBlur(Output* output, bool schedule_frame);
   void UpdateQtFrameInterval();
   bool Spawn(const std::string& command) const;
   bool Fail(const char* message) const;
@@ -330,6 +343,7 @@ class CompositorPrivate final {
   wl_display* display_ = nullptr;
   std::unique_ptr<backend::Backend> backend_owner_;
   wlr_backend* backend_ = nullptr;
+  std::unique_ptr<render::BackdropBlurRenderer> backdrop_blur_renderer_;
   wlr_renderer* renderer_ = nullptr;
   wlr_allocator* allocator_ = nullptr;
   wlr_compositor* compositor_ = nullptr;
@@ -339,6 +353,8 @@ class CompositorPrivate final {
   wlr_color_manager_v1* color_manager_ = nullptr;
   wlr_output_layout* output_layout_ = nullptr;
   wlr_scene* scene_ = nullptr;
+  bool scene_direct_scanout_default_ = true;
+  bool scene_calculate_visibility_default_ = true;
   wlr_scene_output_layout* scene_layout_ = nullptr;
   wlr_xdg_shell* xdg_shell_ = nullptr;
   wlr_xdg_decoration_manager_v1* xdg_decoration_manager_ = nullptr;
