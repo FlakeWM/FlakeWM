@@ -324,6 +324,8 @@ bool ProtocolManager::Create(wl_display* display, wlr_backend* backend,
   kde_protocols_ = std::make_unique<KdeProtocolManager>(compositor_);
   const bool kde_valid =
       kde_protocols_->Create(display, backend, seat, output_layout);
+  ukui_protocols_ = std::make_unique<UkuiProtocolManager>(compositor_);
+  const bool ukui_valid = ukui_protocols_->Create(display, seat, output_layout);
   if (idle_notifier_ == nullptr || idle_inhibit_manager_ == nullptr ||
       shortcuts_manager_ == nullptr || pointer_constraints_ == nullptr ||
       relative_pointer_manager_ == nullptr || pointer_gestures_ == nullptr ||
@@ -332,7 +334,7 @@ bool ProtocolManager::Create(wl_display* display, wlr_backend* backend,
       foreign_manager_ == nullptr || output_manager_ == nullptr ||
       output_power_manager_ == nullptr || session_lock_manager_ == nullptr ||
       session_lock_parent_ == nullptr || !input_timestamps_->IsValid() ||
-      !toplevel_drag_manager_->IsValid() || !kde_valid) {
+      !toplevel_drag_manager_->IsValid() || !kde_valid || !ukui_valid) {
     return false;
   }
 
@@ -386,6 +388,7 @@ void ProtocolManager::AddInput(wlr_input_device* device) {
 
 void ProtocolManager::AddOutput(wlr_output* output) {
   kde_protocols_->AddOutput(output);
+  ukui_protocols_->AddOutput(output);
   if (session_lock_ != nullptr) {
     session_lock_->AddOutput(output);
   }
@@ -419,7 +422,14 @@ void ProtocolManager::UpdateOutputs() {
   }
   wlr_output_manager_v1_set_configuration(output_manager_, configuration);
   kde_protocols_->UpdateOutputs();
+  ukui_protocols_->UpdateOutputs();
   UpdateSessionLockGeometry();
+}
+
+void ProtocolManager::UpdateOutputUsableAreas() {
+  if (ukui_protocols_ != nullptr) {
+    ukui_protocols_->UpdateOutputs();
+  }
 }
 
 void ProtocolManager::NotifyKeyboard(uint32_t time_msec) {
@@ -581,6 +591,7 @@ void ProtocolManager::MapToplevel(wlr_surface* surface, const char* title,
     return;
   }
   kde_protocols_->MapToplevel(surface);
+  ukui_protocols_->MapToplevel(surface);
   auto foreign = std::make_unique<ForeignToplevel>(this, foreign_manager_,
                                                    ext_foreign_list_, surface);
   if (!foreign->IsValid()) {
@@ -594,6 +605,7 @@ void ProtocolManager::MapToplevel(wlr_surface* surface, const char* title,
 
 void ProtocolManager::UnmapToplevel(wlr_surface* surface) {
   kde_protocols_->UnmapToplevel(surface);
+  ukui_protocols_->UnmapToplevel(surface);
   for (auto iterator = foreign_toplevels_.begin();
        iterator != foreign_toplevels_.end(); ++iterator) {
     if ((*iterator)->Surface() == surface) {
@@ -607,6 +619,7 @@ void ProtocolManager::UnmapToplevel(wlr_surface* surface) {
 
 void ProtocolManager::UpdateToplevel(wlr_surface* surface) {
   kde_protocols_->UpdateToplevel(surface);
+  ukui_protocols_->UpdateToplevel(surface);
   ForeignToplevel* foreign = FindForeign(surface);
   core::CompositorPrivate::Toplevel* toplevel =
       compositor_->ToplevelForSurface(surface);
@@ -633,6 +646,7 @@ void ProtocolManager::UpdateToplevel(wlr_surface* surface) {
 void ProtocolManager::UpdateToplevelParent(wlr_surface* surface,
                                            wlr_surface* parent) {
   kde_protocols_->UpdateToplevelParent(surface, parent);
+  ukui_protocols_->UpdateToplevelParent(surface, parent);
   ForeignToplevel* foreign = FindForeign(surface);
   ForeignToplevel* foreign_parent = FindForeign(parent);
   if (foreign != nullptr) {

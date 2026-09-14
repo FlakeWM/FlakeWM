@@ -1766,6 +1766,9 @@ void CompositorPrivate::ArrangeLayers(Output* output) {
   output->usable_box = usable_box;
   output->usable_box.x += output_box.x;
   output->usable_box.y += output_box.y;
+  if (protocol_manager_ != nullptr) {
+    protocol_manager_->UpdateOutputUsableAreas();
+  }
 
   // Maximized windows follow changes made by panels and other exclusive layers.
   for (const std::unique_ptr<Toplevel>& toplevel : toplevels_) {

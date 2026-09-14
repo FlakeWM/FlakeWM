@@ -178,10 +178,10 @@ Control 等敏感 global 均被隐藏；通过合成器常规 socket 连接的�
 
 | 协议名称                  | 支持情况 | 说明 |
 | :------------------------ | :------: | :--- |
-| ukui_blur_manager_v1      |    no    | 1    |
-| ukui_output_management_v1 |    no    | 1    |
-| ukui_shell                |    no    | 3    |
-| ukui_window_management    |    no    | 1    |
+| ukui_blur_manager_v1      |    1     |      |
+| ukui_output_management_v1 |    1     |      |
+| ukui_shell                |    4     |      |
+| ukui_window_management    |    1     |      |
 
 ## treeland
 

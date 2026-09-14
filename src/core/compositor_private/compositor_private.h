@@ -49,6 +49,7 @@ class BackdropBlurRenderer;
 namespace protocol {
 class KdeOutputManager;
 class KdeProtocolManager;
+class UkuiProtocolManager;
 }  // namespace protocol
 
 namespace xwayland {
@@ -65,6 +66,7 @@ class CompositorPrivate final {
   friend class protocol::KdeOutputManager;
   friend class protocol::KdeProtocolManager;
   friend class protocol::ProtocolManager;
+  friend class protocol::UkuiProtocolManager;
   friend class xwayland::XSurface;
   friend class xwayland::XWaylandManager;
 

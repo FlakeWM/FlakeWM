@@ -34,6 +34,7 @@
 #include "src/protocol/input_timestamps/input_timestamps_manager.h"
 #include "src/protocol/kde/kde_protocol_manager.h"
 #include "src/protocol/toplevel_drag/toplevel_drag_manager.h"
+#include "src/protocol/ukui/ukui_protocol_manager.h"
 #include "src/utils/signal_listener.h"
 #include "src/wlr_wrapper/wlr_layer_shell.h"
 #include "src/wlr_wrapper/wlroots.h"
@@ -62,6 +63,7 @@ class ProtocolManager final {
   void AddInput(wlr_input_device* device);
   void AddOutput(wlr_output* output);
   void UpdateOutputs();
+  void UpdateOutputUsableAreas();
   void NotifyKeyboard(uint32_t time_msec);
   void NotifyPointer(uint32_t time_msec);
   void SendRelativeMotion(const wlr_pointer_motion_event& event);
@@ -193,6 +195,7 @@ class ProtocolManager final {
   bool session_locked_ = false;
   std::unique_ptr<InputTimestampsManager> input_timestamps_;
   std::unique_ptr<KdeProtocolManager> kde_protocols_;
+  std::unique_ptr<UkuiProtocolManager> ukui_protocols_;
   std::unique_ptr<ToplevelDragManager> toplevel_drag_manager_;
   std::unique_ptr<input::TouchpadManager> touchpad_manager_;
   std::vector<std::unique_ptr<ForeignToplevel>> foreign_toplevels_;

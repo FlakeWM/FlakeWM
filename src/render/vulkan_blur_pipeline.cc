@@ -23,6 +23,8 @@
 
 #include <drm_fourcc.h>
 
+#include "src/wlr_wrapper/color.h"
+
 extern "C" {
 #include <wlr/render/allocator.h>
 #include <wlr/render/drm_format_set.h>

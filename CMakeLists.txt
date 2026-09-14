@@ -115,6 +115,24 @@ foreach(protocol IN ITEMS
   list(APPEND FLAKEWM_KDE_PROTOCOLS ${FLAKEWM_${protocol_variable}_PROTOCOL})
 endforeach()
 
+# UKUI compatibility protocols, kept in-tree at the revisions implemented by
+# the server-side compatibility manager.
+foreach(protocol IN ITEMS
+    ukui-blur-v1
+    ukui-output-v1
+    ukui-shell
+    ukui-window-management
+  )
+  string(REPLACE "-" "_" protocol_variable "${protocol}")
+  string(TOUPPER "${protocol_variable}" protocol_variable)
+  flakewm_generate_server_protocol(
+    "FLAKEWM_${protocol_variable}_PROTOCOL"
+    "${CMAKE_CURRENT_SOURCE_DIR}/protocols/${protocol}.xml"
+    "${protocol}"
+  )
+  list(APPEND FLAKEWM_UKUI_PROTOCOLS ${FLAKEWM_${protocol_variable}_PROTOCOL})
+endforeach()
+
 add_executable(flakewm-xwayland
   src/xwayland/server/server.cc
 )
@@ -153,6 +171,11 @@ set(flakewm_CXX_SOURCES
   src/protocol/text_input/text_input_v3.cc
   src/protocol/toplevel_drag/toplevel_drag.cc
   src/protocol/toplevel_drag/toplevel_drag_manager.cc
+  src/protocol/ukui/ukui_blur.cc
+  src/protocol/ukui/ukui_output.cc
+  src/protocol/ukui/ukui_protocol_manager.cc
+  src/protocol/ukui/ukui_shell.cc
+  src/protocol/ukui/ukui_window_management.cc
   src/view/ssd/ssd/ssd.cc
   src/view/ssd/ssd_buffer/ssd_buffer.cc
   src/view/ssd/ssd_renderer/ssd_renderer.cc
@@ -173,6 +196,7 @@ add_executable(flakewm
   ${FLAKEWM_INPUT_TIMESTAMPS_V1_PROTOCOL}
   ${FLAKEWM_XDG_TOPLEVEL_DRAG_V1_PROTOCOL}
   ${FLAKEWM_KDE_PROTOCOLS}
+  ${FLAKEWM_UKUI_PROTOCOLS}
   src/wlr_wrapper/wlroots.h
   src/wlr_wrapper/color.h
   src/wlr_wrapper/scene.h
@@ -207,6 +231,8 @@ add_executable(flakewm
   src/protocol/text_input/text_input_v3.h
   src/protocol/toplevel_drag/toplevel_drag.h
   src/protocol/toplevel_drag/toplevel_drag_manager.h
+  src/protocol/ukui/ukui_protocol_manager.h
+  src/protocol/ukui/ukui_protocol_manager_internal.h
   src/view/ssd/ssd/ssd.h
   src/view/ssd/ssd_buffer/ssd_buffer.h
   src/view/ssd/ssd_renderer/ssd_renderer.h
