@@ -54,6 +54,7 @@ class KdeProtocolManager final {
   void UnmapToplevel(wlr_surface* surface);
   void UpdateToplevel(wlr_surface* surface);
   void UpdateToplevelParent(wlr_surface* surface, wlr_surface* parent);
+  void UpdateWorkspaces();
   void SetGlobalBlur(bool enabled, int strength);
 
  private:

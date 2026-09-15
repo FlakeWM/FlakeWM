@@ -195,7 +195,15 @@ set(flakewm_CXX_SOURCES
   src/input/touchpad_manager.cc
   src/render/backdrop_blur_renderer.cc
   src/render/vulkan_blur_pipeline.cc
+  src/view/app_switcher/app_switcher.cc
+  src/view/multitasking/multitasking.cc
+  src/view/multitasking/multitasking_layout.cc
+  src/view/multitasking/multitasking_renderer.cc
+  src/view/multitasking/multitasking_wallpaper.cc
   src/view/touch_feedback.cc
+  src/view/window_previews/window_previews.cc
+  src/view/window_previews/window_previews_layout.cc
+  src/view/window_previews/window_previews_renderer.cc
   src/view/window_selecter/window_selector.cc
   src/protocol/foreign_toplevel/foreign_toplevel.cc
   src/protocol/gxde/gxde_identifier.cc
@@ -268,7 +276,13 @@ add_executable(flakewm
   src/input/touchpad_manager.h
   src/render/backdrop_blur_renderer.h
   src/render/vulkan_blur_pipeline.h
+  src/view/app_switcher/app_switcher.h
+  src/view/multitasking/multitasking.h
+  src/view/multitasking/multitasking_renderer.h
+  src/view/multitasking/multitasking_wallpaper.h
   src/view/touch_feedback.h
+  src/view/window_previews/window_previews.h
+  src/view/window_previews/window_previews_renderer.h
   src/view/window_selecter/window_selector.h
   src/protocol/foreign_toplevel/foreign_toplevel.h
   src/protocol/gxde/gxde_protocol_manager.h
@@ -330,6 +344,31 @@ qt_add_resources(flakewm "touch_feedback_qml"
   PREFIX "/flakewm"
   BASE src/view
   FILES src/view/touch_feedback.qml
+)
+
+qt_add_resources(flakewm "app_switcher_qml"
+  PREFIX "/flakewm"
+  BASE src/view/app_switcher
+  FILES
+    src/view/app_switcher/app_switcher.qml
+    src/view/app_switcher/kwintabboxsettings.kcfg
+)
+
+qt_add_resources(flakewm "multitasking_qml"
+  PREFIX "/flakewm"
+  BASE src/view/multitasking
+  FILES
+    src/view/multitasking/multitasking.qml
+    src/view/multitasking/icons/add-light.svg
+    src/view/multitasking/icons/multiview_delete.svg
+    src/view/multitasking/icons/multiview_top.svg
+    src/view/multitasking/icons/multiview_top_active.svg
+)
+
+qt_add_resources(flakewm "window_previews_qml"
+  PREFIX "/flakewm"
+  BASE src/view/window_previews
+  FILES src/view/window_previews/window_previews.qml
 )
 
 qt_add_resources(flakewm "window_selector_qml"

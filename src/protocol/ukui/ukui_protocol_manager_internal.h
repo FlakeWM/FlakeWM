@@ -204,6 +204,8 @@ class UkuiProtocolManager::Impl final {
                             int32_t fd);
   static void NoopDesktopId(wl_client* client, wl_resource* resource,
                             const char* id);
+  static void EnterVirtualDesktop(wl_client* client, wl_resource* resource,
+                                  const char* id);
   static void NoopWindowRequest(wl_client* client, wl_resource* resource);
   static void SendWindowToOutput(wl_client* client, wl_resource* resource,
                                  wl_resource* output_resource);

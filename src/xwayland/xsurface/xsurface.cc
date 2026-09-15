@@ -178,6 +178,7 @@ void XSurface::OnAssociate(XSurface* surface, void*) {
                               surface->handle->y);
   surface->map.Connect(&surface->handle->surface->events.map);
   surface->unmap.Connect(&surface->handle->surface->events.unmap);
+  surface->commit.Connect(&surface->handle->surface->events.commit);
 
   if (surface->handle->surface->mapped) {
     Toplevel::OnMap(surface, nullptr);

@@ -507,6 +507,209 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
                    : std::nullopt;
       });
 
+  app_switcher_ = std::make_unique<view::AppSwitcher>(
+      shell_layer_trees_[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY],
+      [this]() {
+        std::vector<view::AppSwitcher::Entry> entries;
+        const wlr_surface* focused = seat_->keyboard_state.focused_surface;
+        entries.reserve(toplevels_.size());
+        for (const std::unique_ptr<Toplevel>& toplevel : toplevels_) {
+          if (!toplevel->mapped || !toplevel->IsAlive() ||
+              !toplevel->WantsFocus() || toplevel->Surface() == nullptr ||
+              toplevel->workspace != current_workspace_) {
+            continue;
+          }
+          entries.push_back({
+              .surface = toplevel->Surface(),
+              .title = QString::fromUtf8(
+                  toplevel->Title() == nullptr ? "" : toplevel->Title()),
+              .app_id = QString::fromUtf8(
+                  toplevel->AppId() == nullptr ? "" : toplevel->AppId()),
+              .active = focused == toplevel->Surface(),
+              .minimized = toplevel->minimized,
+          });
+        }
+        return entries;
+      },
+      [this](wlr_surface* surface) {
+        Toplevel* toplevel = ToplevelForSurface(surface);
+        if (toplevel == nullptr || !toplevel->mapped || !toplevel->IsAlive()) {
+          return;
+        }
+        if (toplevel->minimized) {
+          toplevel->minimized = false;
+          toplevel->SetMinimizedState(false);
+          if (toplevel->scene_tree != nullptr &&
+              toplevel->workspace == current_workspace_) {
+            wlr_scene_node_set_enabled(&toplevel->scene_tree->node, true);
+          }
+        }
+        FocusToplevel(toplevel);
+      },
+      [this]() {
+        wlr_box box = {};
+        wlr_output* output =
+            wlr_output_layout_output_at(output_layout_, cursor_->x, cursor_->y);
+        wlr_output_layout_get_box(output_layout_, output, &box);
+        return box;
+      },
+      [this](const void* owner, wlr_texture* texture,
+             const pixman_region32_t* region, float offset) {
+        if (backdrop_blur_renderer_ == nullptr ||
+            !backdrop_blur_renderer_->IsSupported()) {
+          return false;
+        }
+        backdrop_blur_renderer_->SetTextureBlur(owner, texture, region, offset);
+        UpdateBackdropBlurState();
+        return true;
+      },
+      [this](const void* owner) {
+        if (backdrop_blur_renderer_ == nullptr) return;
+        backdrop_blur_renderer_->ClearTextureBlur(owner);
+        UpdateBackdropBlurState();
+      });
+
+  multitasking_ = std::make_unique<view::Multitasking>(
+      shell_layer_trees_[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY],
+      [this]() {
+        std::vector<view::Multitasking::Entry> entries;
+        const wlr_surface* focused = seat_->keyboard_state.focused_surface;
+        entries.reserve(toplevels_.size());
+        for (const std::unique_ptr<Toplevel>& toplevel : toplevels_) {
+          if (!toplevel->mapped || !toplevel->IsAlive() ||
+              !toplevel->WantsFocus() || toplevel->Surface() == nullptr) {
+            continue;
+          }
+          wlr_box geometry = toplevel->Geometry();
+          if (toplevel->scene_tree != nullptr) {
+            geometry.x += toplevel->scene_tree->node.x;
+            geometry.y += toplevel->scene_tree->node.y;
+          }
+          entries.push_back({
+              .surface = toplevel->Surface(),
+              .title = QString::fromUtf8(
+                  toplevel->Title() == nullptr ? "" : toplevel->Title()),
+              .app_id = QString::fromUtf8(
+                  toplevel->AppId() == nullptr ? "" : toplevel->AppId()),
+              .geometry = geometry,
+              .workspace = toplevel->workspace,
+              .active = focused == toplevel->Surface(),
+              .minimized = toplevel->minimized,
+              .kept_above = toplevel->kept_above,
+          });
+        }
+        return entries;
+      },
+      [this]() { return workspace_count_; },
+      [this]() { return current_workspace_; },
+      [this](int workspace) { SwitchWorkspace(workspace); },
+      [this](wlr_surface* surface) {
+        Toplevel* toplevel = ToplevelForSurface(surface);
+        if (toplevel == nullptr || !toplevel->mapped || !toplevel->IsAlive()) {
+          return;
+        }
+        SwitchWorkspace(toplevel->workspace);
+        if (toplevel->minimized) {
+          toplevel->minimized = false;
+          toplevel->SetMinimizedState(false);
+          if (toplevel->scene_tree != nullptr) {
+            wlr_scene_node_set_enabled(&toplevel->scene_tree->node, true);
+          }
+        }
+        FocusToplevel(toplevel);
+      },
+      [this](wlr_surface* surface) {
+        Toplevel* toplevel = ToplevelForSurface(surface);
+        if (toplevel != nullptr && toplevel->IsAlive()) toplevel->Close();
+      },
+      [this](wlr_surface* surface) {
+        if (Toplevel* toplevel = ToplevelForSurface(surface);
+            toplevel != nullptr && toplevel->IsAlive()) {
+          SetKeptAbove(toplevel, !toplevel->kept_above);
+        }
+      },
+      [this]() { return AddWorkspace(); },
+      [this](int workspace) { return RemoveWorkspace(workspace); },
+      [this](int from, int to) { return ReorderWorkspace(from, to); },
+      [this](wlr_surface* surface, int workspace) {
+        return MoveToplevelToWorkspace(ToplevelForSurface(surface), workspace);
+      },
+      [this](bool hidden) { SetMultitaskingSourcesHidden(hidden); },
+      [this]() {
+        wlr_box box = {};
+        wlr_output* output =
+            wlr_output_layout_output_at(output_layout_, cursor_->x, cursor_->y);
+        wlr_output_layout_get_box(output_layout_, output, &box);
+        return box;
+      });
+
+  window_previews_ = std::make_unique<view::WindowPreviews>(
+      shell_layer_trees_[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY],
+      [this]() {
+        std::vector<view::WindowPreviews::Entry> entries;
+        const wlr_surface* focused = seat_->keyboard_state.focused_surface;
+        entries.reserve(toplevels_.size());
+        for (const std::unique_ptr<Toplevel>& toplevel : toplevels_) {
+          if (!toplevel->mapped || !toplevel->IsAlive() ||
+              !toplevel->CanManage() ||
+              !toplevel->WantsFocus() || toplevel->Surface() == nullptr) {
+            continue;
+          }
+          wlr_box geometry = toplevel->Geometry();
+          if (toplevel->scene_tree != nullptr) {
+            geometry.x += toplevel->scene_tree->node.x;
+            geometry.y += toplevel->scene_tree->node.y;
+          }
+          entries.push_back({
+              .surface = toplevel->Surface(),
+              .title = QString::fromUtf8(
+                  toplevel->Title() == nullptr ? "" : toplevel->Title()),
+              .app_id = QString::fromUtf8(
+                  toplevel->AppId() == nullptr ? "" : toplevel->AppId()),
+              .geometry = geometry,
+              .workspace = toplevel->workspace,
+              .active = focused == toplevel->Surface(),
+              .minimized = toplevel->minimized,
+          });
+        }
+        return entries;
+      },
+      [this]() { return current_workspace_; },
+      [this](wlr_surface* surface) {
+        Toplevel* toplevel = ToplevelForSurface(surface);
+        if (toplevel == nullptr || !toplevel->mapped || !toplevel->IsAlive()) {
+          return;
+        }
+        if (toplevel->minimized) {
+          toplevel->minimized = false;
+          toplevel->SetMinimizedState(false);
+        }
+        SwitchWorkspace(toplevel->workspace);
+        FocusToplevel(toplevel);
+      },
+      [this](wlr_surface* surface) {
+        if (Toplevel* toplevel = ToplevelForSurface(surface);
+            toplevel != nullptr && toplevel->IsAlive()) {
+          toplevel->Close();
+        }
+      },
+      [this](bool hidden) { SetWindowPreviewsSourcesHidden(hidden); },
+      [this]() {
+        wlr_box box = {};
+        wlr_output* output =
+            wlr_output_layout_output_at(output_layout_, cursor_->x, cursor_->y);
+        if (output != nullptr) {
+          wlr_output_layout_get_box(output_layout_, output, &box);
+        }
+        return box;
+      },
+      [this]() {
+        wlr_output* output =
+            wlr_output_layout_output_at(output_layout_, cursor_->x, cursor_->y);
+        return output == nullptr ? wlr_box{} : UsableOutputBox(output);
+      },
+      [this]() { return std::pair<double, double>{cursor_->x, cursor_->y}; });
+
   // Publish those extended protocols ONLY after seat & cursor O.K.
   protocol_manager_ = std::make_unique<protocol::ProtocolManager>(this);
   if (!protocol_manager_->Create(
@@ -876,6 +1079,21 @@ void CompositorPrivate::Keyboard::OnKey(Keyboard* keyboard,
                                                         *event)) {
     return;
   }
+  if (keyboard->compositor->window_previews_ != nullptr &&
+      keyboard->compositor->window_previews_->HandleKey(keyboard->handle,
+                                                        *event)) {
+    return;
+  }
+  if (keyboard->compositor->multitasking_ != nullptr &&
+      keyboard->compositor->multitasking_->HandleKey(keyboard->handle,
+                                                     *event)) {
+    return;
+  }
+  if (keyboard->compositor->app_switcher_ != nullptr &&
+      keyboard->compositor->app_switcher_->HandleKey(keyboard->handle,
+                                                     *event)) {
+    return;
+  }
   const bool shortcuts_inhibited =
       keyboard->compositor->protocol_manager_ != nullptr &&
       keyboard->compositor->protocol_manager_->ShortcutsInhibited();
@@ -991,10 +1209,13 @@ void CompositorPrivate::XdgDecoration::OnDestroy(XdgDecoration* decoration,
 
 CompositorPrivate::Toplevel::Toplevel(CompositorPrivate* compositor,
                                       wlr_xdg_toplevel* toplevel)
-    : compositor(compositor), handle(toplevel) {}
+    : compositor(compositor),
+      handle(toplevel),
+      workspace(compositor == nullptr ? 0 : compositor->current_workspace_) {}
 
 CompositorPrivate::Toplevel::Toplevel(CompositorPrivate* compositor)
-    : compositor(compositor) {}
+    : compositor(compositor),
+      workspace(compositor == nullptr ? 0 : compositor->current_workspace_) {}
 
 CompositorPrivate::Toplevel::~Toplevel() = default;
 
@@ -1124,7 +1345,8 @@ void CompositorPrivate::Toplevel::UpdateCapabilities() {
 void CompositorPrivate::Toplevel::OnMap(Toplevel* toplevel, void*) {
   // Honor the initial state request before focusing the new window.
   toplevel->mapped = true;
-  wlr_scene_node_set_enabled(&toplevel->scene_tree->node, true);
+  wlr_scene_node_set_enabled(&toplevel->scene_tree->node,
+                             toplevel->compositor->IsToplevelVisible(toplevel));
   if (toplevel->compositor->protocol_manager_ != nullptr) {
     toplevel->compositor->protocol_manager_->MapToplevel(
         toplevel->Surface(), toplevel->Title(), toplevel->AppId());
@@ -1147,6 +1369,18 @@ void CompositorPrivate::Toplevel::OnUnmap(Toplevel* toplevel, void*) {
     toplevel->compositor->window_selector_->SurfaceUnavailable(
         toplevel->Surface());
   }
+  if (toplevel->compositor->app_switcher_ != nullptr) {
+    toplevel->compositor->app_switcher_->SurfaceUnavailable(
+        toplevel->Surface());
+  }
+  if (toplevel->compositor->multitasking_ != nullptr) {
+    toplevel->compositor->multitasking_->SurfaceUnavailable(
+        toplevel->Surface());
+  }
+  if (toplevel->compositor->window_previews_ != nullptr) {
+    toplevel->compositor->window_previews_->SurfaceUnavailable(
+        toplevel->Surface());
+  }
   toplevel->mapped = false;
   if (toplevel->compositor->protocol_manager_ != nullptr) {
     toplevel->compositor->protocol_manager_->UnmapToplevel(toplevel->Surface());
@@ -1161,6 +1395,13 @@ void CompositorPrivate::Toplevel::OnUnmap(Toplevel* toplevel, void*) {
 }
 
 void CompositorPrivate::Toplevel::OnCommit(Toplevel* toplevel, void*) {
+  if (toplevel->compositor->multitasking_ != nullptr) {
+    toplevel->compositor->multitasking_->SurfaceUpdated(toplevel->Surface());
+  }
+  if (toplevel->compositor->window_previews_ != nullptr) {
+    toplevel->compositor->window_previews_->SurfaceUpdated(
+        toplevel->Surface());
+  }
   if (toplevel->handle == nullptr) {
     return;
   }
@@ -1296,6 +1537,18 @@ void CompositorPrivate::Toplevel::OnDestroy(Toplevel* toplevel, void*) {
   // End its active grab before disconnecting protocol listeners.
   if (toplevel->compositor->window_selector_ != nullptr) {
     toplevel->compositor->window_selector_->SurfaceUnavailable(
+        toplevel->Surface());
+  }
+  if (toplevel->compositor->app_switcher_ != nullptr) {
+    toplevel->compositor->app_switcher_->SurfaceUnavailable(
+        toplevel->Surface());
+  }
+  if (toplevel->compositor->multitasking_ != nullptr) {
+    toplevel->compositor->multitasking_->SurfaceUnavailable(
+        toplevel->Surface());
+  }
+  if (toplevel->compositor->window_previews_ != nullptr) {
+    toplevel->compositor->window_previews_->SurfaceUnavailable(
         toplevel->Surface());
   }
   if (toplevel->compositor->grabbed_toplevel_ == toplevel) {
@@ -1610,7 +1863,8 @@ void CompositorPrivate::FocusToplevel(Toplevel* toplevel) {
   // Ignore windows which cannot receive focus.
   if ((protocol_manager_ != nullptr && protocol_manager_->SessionLocked()) ||
       toplevel == nullptr || !toplevel->mapped || !toplevel->IsAlive() ||
-      toplevel->Surface() == nullptr || !toplevel->WantsFocus()) {
+      toplevel->Surface() == nullptr || !toplevel->WantsFocus() ||
+      toplevel->workspace != current_workspace_ || toplevel->minimized) {
     return;
   }
 
@@ -1634,6 +1888,9 @@ void CompositorPrivate::FocusToplevel(Toplevel* toplevel) {
 
   wlr_surface* surface = toplevel->Surface();
   wlr_surface* previous_surface = seat_->keyboard_state.focused_surface;
+  if (app_switcher_ != nullptr) {
+    app_switcher_->SurfaceActivated(surface);
+  }
   if (previous_surface == surface) {
     if (protocol_manager_ != nullptr) {
       protocol_manager_->UpdateKeyboardFocus(surface);
@@ -1659,6 +1916,15 @@ void CompositorPrivate::FocusToplevel(Toplevel* toplevel) {
   // Raise, activate and send the current keyboard state.
   wlr_scene_node_raise_to_top(&toplevel->scene_tree->node);
   toplevel->Restack();
+  for (const std::unique_ptr<Toplevel>& candidate : toplevels_) {
+    if (candidate.get() != toplevel && candidate->kept_above &&
+        candidate->scene_tree != nullptr && IsToplevelVisible(candidate.get())) {
+      wlr_scene_node_raise_to_top(&candidate->scene_tree->node);
+    }
+  }
+  if (toplevel->kept_above) {
+    wlr_scene_node_raise_to_top(&toplevel->scene_tree->node);
+  }
   toplevel->SetActivated(true);
   if (dbus_manager_ != nullptr) {
     dbus_manager_->NotifyToplevelActivated(toplevel->AppId(),
@@ -1698,7 +1964,7 @@ void CompositorPrivate::FocusNextToplevel(Toplevel* excluding) {
        ++iterator) {
     Toplevel* candidate = iterator->get();
     if (candidate != excluding && candidate->mapped && !candidate->minimized &&
-        candidate->IsAlive()) {
+        candidate->IsAlive() && candidate->workspace == current_workspace_) {
       FocusToplevel(candidate);
       return;
     }
@@ -1710,37 +1976,164 @@ void CompositorPrivate::FocusNextToplevel(Toplevel* excluding) {
   }
 }
 
-void CompositorPrivate::CycleToplevel(bool reverse) {
-  if (protocol_manager_ != nullptr && protocol_manager_->SessionLocked()) {
+bool CompositorPrivate::IsToplevelVisible(const Toplevel* toplevel) const {
+  return toplevel != nullptr && toplevel->mapped && !toplevel->minimized &&
+         toplevel->workspace == current_workspace_ &&
+         !multitasking_sources_hidden_ && !window_previews_sources_hidden_;
+}
+
+void CompositorPrivate::SwitchWorkspace(int workspace) {
+  if (workspace < 0 || workspace >= workspace_count_ ||
+      workspace == current_workspace_ ||
+      (protocol_manager_ != nullptr && protocol_manager_->SessionLocked())) {
     return;
   }
-  std::vector<Toplevel*> candidates;
+  if (app_switcher_ != nullptr) app_switcher_->Cancel();
+  ResetCursorMode();
+  wlr_surface* previous_surface = seat_->keyboard_state.focused_surface;
+  Toplevel* previous = ToplevelForSurface(previous_surface);
+  current_workspace_ = workspace;
+
   for (const std::unique_ptr<Toplevel>& candidate : toplevels_) {
-    if (candidate->mapped && !candidate->minimized && candidate->IsAlive() &&
-        candidate->WantsFocus()) {
-      candidates.push_back(candidate.get());
+    if (candidate->scene_tree != nullptr) {
+      wlr_scene_node_set_enabled(&candidate->scene_tree->node,
+                                 IsToplevelVisible(candidate.get()));
+    }
+    if (candidate->ssd != nullptr &&
+        candidate->workspace != current_workspace_) {
+      candidate->ssd->SetActive(false);
     }
   }
-  if (candidates.empty()) {
-    return;
+  if (previous != nullptr && previous->workspace != current_workspace_) {
+    previous->SetActivated(false);
+    wlr_seat_keyboard_clear_focus(seat_);
   }
+  wlr_seat_pointer_clear_focus(seat_);
+  FocusNextToplevel(nullptr);
+  if (protocol_manager_ != nullptr) {
+    protocol_manager_->UpdateWorkspaces();
+    protocol_manager_->UpdateKeyboardFocus(
+        seat_->keyboard_state.focused_surface);
+    for (const std::unique_ptr<Toplevel>& candidate : toplevels_) {
+      if (candidate->mapped) {
+        protocol_manager_->UpdateToplevel(candidate->Surface());
+      }
+    }
+  }
+}
 
-  Toplevel* focused = ToplevelForSurface(seat_->keyboard_state.focused_surface);
-  auto current = std::find(candidates.begin(), candidates.end(), focused);
-  if (current == candidates.end()) {
-    FocusToplevel(reverse ? candidates.front() : candidates.back());
-    return;
+bool CompositorPrivate::MoveToplevelToWorkspace(Toplevel* toplevel,
+                                                int workspace) {
+  if (toplevel == nullptr || workspace < 0 || workspace >= workspace_count_ ||
+      toplevel->workspace == workspace) {
+    return false;
   }
-  if (candidates.size() == 1) {
-    return;
+  const bool had_focus =
+      seat_->keyboard_state.focused_surface == toplevel->Surface();
+  toplevel->workspace = workspace;
+  if (toplevel->scene_tree != nullptr) {
+    wlr_scene_node_set_enabled(&toplevel->scene_tree->node,
+                               IsToplevelVisible(toplevel));
   }
+  if (had_focus && workspace != current_workspace_) {
+    toplevel->SetActivated(false);
+    FocusNextToplevel(toplevel);
+  }
+  if (protocol_manager_ != nullptr) {
+    protocol_manager_->UpdateToplevel(toplevel->Surface());
+  }
+  return true;
+}
 
-  const std::size_t index =
-      static_cast<std::size_t>(current - candidates.begin());
-  const std::size_t next =
-      reverse ? (index + 1) % candidates.size()
-              : (index + candidates.size() - 1) % candidates.size();
-  FocusToplevel(candidates[next]);
+bool CompositorPrivate::AddWorkspace() {
+  if (workspace_count_ >= kMaximumWorkspaceCount) return false;
+  ++workspace_count_;
+  if (protocol_manager_ != nullptr) protocol_manager_->UpdateWorkspaces();
+  return true;
+}
+
+bool CompositorPrivate::RemoveWorkspace(int workspace) {
+  if (workspace_count_ <= 1 || workspace < 0 ||
+      workspace >= workspace_count_) return false;
+  --workspace_count_;
+  for (const std::unique_ptr<Toplevel>& toplevel : toplevels_) {
+    if (toplevel->workspace == workspace) {
+      toplevel->workspace = std::min(workspace, workspace_count_ - 1);
+    } else if (toplevel->workspace > workspace) {
+      --toplevel->workspace;
+    }
+  }
+  if (current_workspace_ == workspace) {
+    current_workspace_ = std::min(workspace, workspace_count_ - 1);
+  } else if (current_workspace_ > workspace) {
+    --current_workspace_;
+  }
+  for (const std::unique_ptr<Toplevel>& toplevel : toplevels_) {
+    if (toplevel->scene_tree != nullptr) {
+      wlr_scene_node_set_enabled(&toplevel->scene_tree->node,
+                                 IsToplevelVisible(toplevel.get()));
+    }
+  }
+  if (protocol_manager_ != nullptr) {
+    protocol_manager_->UpdateWorkspaces();
+    for (const std::unique_ptr<Toplevel>& toplevel : toplevels_) {
+      if (toplevel->mapped) protocol_manager_->UpdateToplevel(toplevel->Surface());
+    }
+  }
+  return true;
+}
+
+bool CompositorPrivate::ReorderWorkspace(int from, int to) {
+  if (from < 0 || to < 0 || from >= workspace_count_ ||
+      to >= workspace_count_ || from == to) return false;
+  const auto remap = [from, to](int index) {
+    if (index == from) return to;
+    if (from < to && index > from && index <= to) return index - 1;
+    if (from > to && index >= to && index < from) return index + 1;
+    return index;
+  };
+  current_workspace_ = remap(current_workspace_);
+  for (const std::unique_ptr<Toplevel>& toplevel : toplevels_) {
+    toplevel->workspace = remap(toplevel->workspace);
+  }
+  if (protocol_manager_ != nullptr) {
+    protocol_manager_->UpdateWorkspaces();
+    for (const std::unique_ptr<Toplevel>& toplevel : toplevels_) {
+      if (toplevel->mapped) protocol_manager_->UpdateToplevel(toplevel->Surface());
+    }
+  }
+  return true;
+}
+
+void CompositorPrivate::SetKeptAbove(Toplevel* toplevel, bool kept_above) {
+  if (toplevel == nullptr || toplevel->kept_above == kept_above) return;
+  toplevel->kept_above = kept_above;
+  if (toplevel->scene_tree != nullptr && kept_above) {
+    wlr_scene_node_raise_to_top(&toplevel->scene_tree->node);
+  }
+  if (protocol_manager_ != nullptr) {
+    protocol_manager_->UpdateToplevel(toplevel->Surface());
+  }
+}
+
+void CompositorPrivate::SetMultitaskingSourcesHidden(bool hidden) {
+  multitasking_sources_hidden_ = hidden;
+  for (const std::unique_ptr<Toplevel>& toplevel : toplevels_) {
+    if (toplevel->scene_tree != nullptr) {
+      wlr_scene_node_set_enabled(&toplevel->scene_tree->node,
+                                 IsToplevelVisible(toplevel.get()));
+    }
+  }
+}
+
+void CompositorPrivate::SetWindowPreviewsSourcesHidden(bool hidden) {
+  window_previews_sources_hidden_ = hidden;
+  for (const std::unique_ptr<Toplevel>& toplevel : toplevels_) {
+    if (toplevel->scene_tree != nullptr) {
+      wlr_scene_node_set_enabled(&toplevel->scene_tree->node,
+                                 IsToplevelVisible(toplevel.get()));
+    }
+  }
 }
 
 void CompositorPrivate::FocusLayerSurface(LayerSurface* layer_surface) {
@@ -2145,6 +2538,18 @@ void CompositorPrivate::ProcessInteractiveMotion() {
 }
 
 void CompositorPrivate::ProcessCursorMotion(uint32_t time_msec) {
+  if (window_previews_ != nullptr &&
+      window_previews_->HandleMotion(cursor_->x, cursor_->y)) {
+    wlr_cursor_set_xcursor(cursor_, cursor_manager_, "default");
+    wlr_seat_pointer_clear_focus(seat_);
+    return;
+  }
+  if (multitasking_ != nullptr &&
+      multitasking_->HandleMotion(cursor_->x, cursor_->y)) {
+    wlr_cursor_set_xcursor(cursor_, cursor_manager_, "default");
+    wlr_seat_pointer_clear_focus(seat_);
+    return;
+  }
   if (window_selector_ != nullptr && window_selector_->HandleMotion()) {
     wlr_seat_pointer_clear_focus(seat_);
     return;
@@ -2250,6 +2655,21 @@ void CompositorPrivate::OnCursorButton(CompositorPrivate* compositor,
       compositor->protocol_manager_->SessionLocked()) {
     wlr_seat_pointer_notify_button(compositor->seat_, event->time_msec,
                                    event->button, event->state);
+    return;
+  }
+  if (compositor->multitasking_ != nullptr &&
+      compositor->multitasking_->HandleButton(event->button, event->state)) {
+    if (!compositor->multitasking_->IsActive()) {
+      compositor->ProcessCursorMotion(event->time_msec);
+    }
+    return;
+  }
+  if (compositor->window_previews_ != nullptr &&
+      compositor->window_previews_->HandleButton(event->button,
+                                                 event->state)) {
+    if (!compositor->window_previews_->IsActive()) {
+      compositor->ProcessCursorMotion(event->time_msec);
+    }
     return;
   }
   if (compositor->window_selector_ != nullptr &&
@@ -2401,6 +2821,14 @@ void CompositorPrivate::OnCursorAxis(CompositorPrivate* compositor,
       return;
     }
   }
+  if (compositor->multitasking_ != nullptr &&
+      compositor->multitasking_->IsActive()) {
+    return;
+  }
+  if (compositor->window_previews_ != nullptr &&
+      compositor->window_previews_->IsActive()) {
+    return;
+  }
   // Forward wheel and touchpad axis events without changing their source.
   wlr_seat_pointer_notify_axis(
       compositor->seat_, event->time_msec, event->orientation, event->delta,
@@ -2418,6 +2846,36 @@ void CompositorPrivate::OnTouchDown(CompositorPrivate* compositor,
     compositor->protocol_manager_->TouchGestureDown(
         event->touch, event->touch_id, event->x, event->y);
   compositor->MoveTouchCursor(event->touch, event->x, event->y);
+  if (compositor->multitasking_ != nullptr &&
+      compositor->multitasking_->IsActive()) {
+    compositor->multitasking_->HandleMotion(compositor->cursor_->x,
+                                            compositor->cursor_->y);
+    compositor->multitasking_->HandleButton(BTN_LEFT,
+                                            WL_POINTER_BUTTON_STATE_PRESSED);
+    compositor->touch_points_.push_back({
+        .touch = event->touch,
+        .touch_id = event->touch_id,
+        .mode = TouchPointMode::kMultitasking,
+        .last_x = compositor->cursor_->x,
+        .last_y = compositor->cursor_->y,
+    });
+    return;
+  }
+  if (compositor->window_previews_ != nullptr &&
+      compositor->window_previews_->IsActive()) {
+    compositor->window_previews_->HandleMotion(compositor->cursor_->x,
+                                               compositor->cursor_->y);
+    compositor->window_previews_->HandleButton(
+        BTN_LEFT, WL_POINTER_BUTTON_STATE_PRESSED);
+    compositor->touch_points_.push_back({
+        .touch = event->touch,
+        .touch_id = event->touch_id,
+        .mode = TouchPointMode::kWindowPreviews,
+        .last_x = compositor->cursor_->x,
+        .last_y = compositor->cursor_->y,
+    });
+    return;
+  }
   if (compositor->window_selector_ != nullptr &&
       compositor->window_selector_->IsActive()) {
     compositor->window_selector_->HandleMotion();
@@ -2490,8 +2948,8 @@ void CompositorPrivate::OnTouchDown(CompositorPrivate* compositor,
 void CompositorPrivate::OnTouchUp(CompositorPrivate* compositor,
                                   wlr_touch_up_event* event) {
   if (compositor->protocol_manager_ != nullptr)
-    compositor->protocol_manager_->TouchGestureUp(event->touch,
-                                                   event->touch_id, false);
+    compositor->protocol_manager_->TouchGestureUp(event->touch, event->touch_id,
+                                                  false);
   TouchPoint* point = compositor->FindTouchPoint(event->touch, event->touch_id);
   if (point == nullptr) {
     return;
@@ -2512,6 +2970,14 @@ void CompositorPrivate::OnTouchUp(CompositorPrivate* compositor,
   } else if (point->mode == TouchPointMode::kSelector &&
              compositor->window_selector_ != nullptr) {
     compositor->window_selector_->HandleButton(
+        BTN_LEFT, WL_POINTER_BUTTON_STATE_RELEASED);
+  } else if (point->mode == TouchPointMode::kMultitasking &&
+             compositor->multitasking_ != nullptr) {
+    compositor->multitasking_->HandleButton(BTN_LEFT,
+                                            WL_POINTER_BUTTON_STATE_RELEASED);
+  } else if (point->mode == TouchPointMode::kWindowPreviews &&
+             compositor->window_previews_ != nullptr) {
+    compositor->window_previews_->HandleButton(
         BTN_LEFT, WL_POINTER_BUTTON_STATE_RELEASED);
   }
   std::erase_if(compositor->touch_points_, [&](const TouchPoint& candidate) {
@@ -2560,6 +3026,14 @@ void CompositorPrivate::OnTouchMotion(CompositorPrivate* compositor,
   } else if (point->mode == TouchPointMode::kSelector &&
              compositor->window_selector_ != nullptr) {
     compositor->window_selector_->HandleMotion();
+  } else if (point->mode == TouchPointMode::kMultitasking &&
+             compositor->multitasking_ != nullptr) {
+    compositor->multitasking_->HandleMotion(compositor->cursor_->x,
+                                            compositor->cursor_->y);
+  } else if (point->mode == TouchPointMode::kWindowPreviews &&
+             compositor->window_previews_ != nullptr) {
+    compositor->window_previews_->HandleMotion(compositor->cursor_->x,
+                                               compositor->cursor_->y);
   }
   if (compositor->touch_feedback_ != nullptr) {
     compositor->touch_feedback_->Motion(
@@ -2571,8 +3045,8 @@ void CompositorPrivate::OnTouchMotion(CompositorPrivate* compositor,
 void CompositorPrivate::OnTouchCancel(CompositorPrivate* compositor,
                                       wlr_touch_cancel_event* event) {
   if (compositor->protocol_manager_ != nullptr)
-    compositor->protocol_manager_->TouchGestureUp(event->touch,
-                                                   event->touch_id, true);
+    compositor->protocol_manager_->TouchGestureUp(event->touch, event->touch_id,
+                                                  true);
   TouchPoint* point = compositor->FindTouchPoint(event->touch, event->touch_id);
   if (point == nullptr) {
     return;
@@ -2589,6 +3063,12 @@ void CompositorPrivate::OnTouchCancel(CompositorPrivate* compositor,
   } else if (point->mode == TouchPointMode::kSelector &&
              compositor->window_selector_ != nullptr) {
     compositor->window_selector_->Cancel();
+  } else if (point->mode == TouchPointMode::kMultitasking &&
+             compositor->multitasking_ != nullptr) {
+    compositor->multitasking_->Cancel();
+  } else if (point->mode == TouchPointMode::kWindowPreviews &&
+             compositor->window_previews_ != nullptr) {
+    compositor->window_previews_->Cancel();
   }
   std::erase_if(compositor->touch_points_, [&](const TouchPoint& candidate) {
     const bool remove =
@@ -2904,10 +3384,47 @@ bool CompositorPrivate::RegisterDefaultKeyBindings() {
 
   return register_binding(
              "Alt+Tab:no", input::KeyBindingType::kWindowSwitch,
-             [this]() { CycleToplevel(false); }, "Switch to next window") &&
+             [this]() {
+               if (window_previews_ != nullptr) window_previews_->Cancel();
+               if (multitasking_ != nullptr) multitasking_->Cancel();
+               if (app_switcher_ != nullptr) app_switcher_->Cycle(false);
+             },
+             "Switch to next window") &&
          register_binding(
              "Alt+Shift+Tab:no", input::KeyBindingType::kWindowSwitch,
-             [this]() { CycleToplevel(true); }, "Switch to previous window") &&
+             [this]() {
+               if (window_previews_ != nullptr) window_previews_->Cancel();
+               if (multitasking_ != nullptr) multitasking_->Cancel();
+               if (app_switcher_ != nullptr) app_switcher_->Cycle(true);
+             },
+             "Switch to previous window") &&
+         register_binding(
+             "Super+S:no", input::KeyBindingType::kWindowSwitch,
+             [this]() {
+               if (window_selector_ != nullptr) window_selector_->Cancel();
+               if (app_switcher_ != nullptr) app_switcher_->Cancel();
+               if (window_previews_ != nullptr) window_previews_->Cancel();
+               if (multitasking_ != nullptr) multitasking_->Toggle();
+             },
+             "Show multitasking and workspace overview") &&
+         register_binding(
+             "Super+Tab:no", input::KeyBindingType::kWindowSwitch,
+             [this]() {
+               if (window_selector_ != nullptr) window_selector_->Cancel();
+               if (app_switcher_ != nullptr) app_switcher_->Cancel();
+               if (window_previews_ != nullptr) window_previews_->Cancel();
+               if (multitasking_ != nullptr) multitasking_->Toggle();
+             },
+             "Show multitasking and workspace overview") &&
+         register_binding(
+             "Super+A:no", input::KeyBindingType::kWindowSwitch,
+             [this]() {
+               if (window_selector_ != nullptr) window_selector_->Cancel();
+               if (app_switcher_ != nullptr) app_switcher_->Cancel();
+               if (multitasking_ != nullptr) multitasking_->Cancel();
+               if (window_previews_ != nullptr) window_previews_->Toggle();
+             },
+             "Show windows from all workspaces") &&
          register_binding(
              "Alt+F4:no", input::KeyBindingType::kWindowClose,
              [this]() {
@@ -2982,6 +3499,9 @@ void CompositorPrivate::Destroy() {
 
   // Drop local protocol wrappers while their wlroots objects still exist.
   ResetCursorMode();
+  window_previews_.reset();
+  multitasking_.reset();
+  app_switcher_.reset();
   xdg_decorations_.clear();
   popups_.clear();
   layer_surfaces_.clear();

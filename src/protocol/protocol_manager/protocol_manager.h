@@ -26,8 +26,8 @@
 #define SRC_PROTOCOL_PROTOCOL_MANAGER_PROTOCOL_MANAGER_H_
 
 #include <memory>
-#include <utility>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "src/input/touchpad_manager.h"
@@ -93,6 +93,7 @@ class ProtocolManager final {
   void UnmapToplevel(wlr_surface* surface);
   void UpdateToplevel(wlr_surface* surface);
   void UpdateToplevelParent(wlr_surface* surface, wlr_surface* parent);
+  void UpdateWorkspaces();
   void SetGlobalBlur(bool enabled, int strength);
   void SetGestureHandler(input::TouchpadManager::GestureHandler handler) {
     touchpad_manager_->SetGestureHandler(std::move(handler));

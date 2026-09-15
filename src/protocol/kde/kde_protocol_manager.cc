@@ -32,6 +32,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -58,10 +59,24 @@ constexpr uint32_t kPlasmaWindowVersion = 16;
 constexpr uint32_t kBlurVersion = 1;
 constexpr int32_t kMaximumSceneCoordinate =
     std::numeric_limits<int32_t>::max() / 4;
-constexpr char kDesktopId[] = "flakewm-desktop-1";
-constexpr char kDesktopName[] = "Desktop 1";
+constexpr int kMaximumDesktopCount = 6;
 
 const char* Safe(const char* value) { return value == nullptr ? "" : value; }
+
+std::string DesktopId(int index) {
+  return "flakewm-desktop-" + std::to_string(index + 1);
+}
+
+std::string DesktopName(int index) {
+  return "Desktop " + std::to_string(index + 1);
+}
+
+std::optional<int> DesktopIndex(std::string_view id) {
+  for (int index = 0; index < kMaximumDesktopCount; ++index) {
+    if (id == DesktopId(index)) return index;
+  }
+  return std::nullopt;
+}
 
 }  // namespace
 
@@ -70,6 +85,11 @@ class KdeProtocolManager::Impl final {
   struct Keyboard;
   struct PlasmaSurface;
   struct PlasmaWindow;
+  struct VirtualDesktop {
+    Impl* manager;
+    wl_resource* resource;
+    int index;
+  };
   struct Blur;
   struct ServerDecoration;
   struct NewServerDecorationListener;
@@ -77,6 +97,11 @@ class KdeProtocolManager::Impl final {
   explicit Impl(core::CompositorPrivate* compositor) : compositor(compositor) {}
 
   ~Impl() {
+    for (VirtualDesktop* desktop : desktop_resources) {
+      wl_resource_set_user_data(desktop->resource, nullptr);
+      delete desktop;
+    }
+    desktop_resources.clear();
     if (blur_global != nullptr) {
       wl_global_destroy(blur_global);
     }
@@ -224,6 +249,39 @@ class KdeProtocolManager::Impl final {
     }
     for (wl_resource* resource : window->resources) {
       SendWindow(resource, window);
+    }
+  }
+
+  void UpdateWorkspaces() {
+    const int count = compositor->workspace_count_;
+    for (wl_resource* management : desktop_management_resources) {
+      if (announced_workspace_count < count) {
+        for (int index = announced_workspace_count; index < count; ++index) {
+          const std::string id = DesktopId(index);
+          org_kde_plasma_virtual_desktop_management_send_desktop_created(
+              management, id.c_str(), static_cast<uint32_t>(index));
+        }
+      } else if (announced_workspace_count > count) {
+        for (int index = announced_workspace_count - 1; index >= count; --index) {
+          const std::string id = DesktopId(index);
+          org_kde_plasma_virtual_desktop_management_send_desktop_removed(
+              management, id.c_str());
+        }
+      }
+      org_kde_plasma_virtual_desktop_management_send_done(management);
+    }
+    announced_workspace_count = count;
+    for (VirtualDesktop* desktop : desktop_resources) {
+      if (desktop->index >= count) {
+        org_kde_plasma_virtual_desktop_send_removed(desktop->resource);
+        continue;
+      }
+      if (desktop->index == compositor->current_workspace_) {
+        org_kde_plasma_virtual_desktop_send_activated(desktop->resource);
+      } else {
+        org_kde_plasma_virtual_desktop_send_deactivated(desktop->resource);
+      }
+      org_kde_plasma_virtual_desktop_send_done(desktop->resource);
     }
   }
 
@@ -463,8 +521,11 @@ class KdeProtocolManager::Impl final {
     manager->desktop_management_resources.push_back(resource);
     wl_resource_set_implementation(resource, &implementation, manager,
                                    RemoveDesktopManagement);
-    org_kde_plasma_virtual_desktop_management_send_desktop_created(
-        resource, kDesktopId, 0);
+    for (int index = 0; index < manager->compositor->workspace_count_; ++index) {
+      const std::string desktop_id = DesktopId(index);
+      org_kde_plasma_virtual_desktop_management_send_desktop_created(
+          resource, desktop_id.c_str(), static_cast<uint32_t>(index));
+    }
     if (wl_resource_get_version(resource) >=
         ORG_KDE_PLASMA_VIRTUAL_DESKTOP_MANAGEMENT_ROWS_SINCE_VERSION) {
       org_kde_plasma_virtual_desktop_management_send_rows(resource, 1);
@@ -492,43 +553,57 @@ class KdeProtocolManager::Impl final {
       wl_client_post_no_memory(client);
       return;
     }
-    if (std::string_view(Safe(desktop_id)) != kDesktopId) {
+    const std::optional<int> index = DesktopIndex(Safe(desktop_id));
+    if (!index.has_value() || *index >= manager->compositor->workspace_count_) {
       wl_resource_set_implementation(desktop, &implementation, nullptr,
                                      nullptr);
       return;
     }
-    manager->desktop_resources.push_back(desktop);
-    wl_resource_set_implementation(desktop, &implementation, manager,
+    auto* state = new VirtualDesktop{
+        .manager = manager, .resource = desktop, .index = *index};
+    manager->desktop_resources.push_back(state);
+    wl_resource_set_implementation(desktop, &implementation, state,
                                    RemoveDesktop);
-    org_kde_plasma_virtual_desktop_send_desktop_id(desktop, kDesktopId);
-    org_kde_plasma_virtual_desktop_send_name(desktop, kDesktopName);
-    org_kde_plasma_virtual_desktop_send_activated(desktop);
+    const std::string id_value = DesktopId(*index);
+    const std::string name = DesktopName(*index);
+    org_kde_plasma_virtual_desktop_send_desktop_id(desktop, id_value.c_str());
+    org_kde_plasma_virtual_desktop_send_name(desktop, name.c_str());
+    if (*index == manager->compositor->current_workspace_) {
+      org_kde_plasma_virtual_desktop_send_activated(desktop);
+    } else {
+      org_kde_plasma_virtual_desktop_send_deactivated(desktop);
+    }
     org_kde_plasma_virtual_desktop_send_done(desktop);
   }
 
   static void ActivateVirtualDesktop(wl_client*, wl_resource* resource) {
-    if (wl_resource_get_user_data(resource) != nullptr) {
-      org_kde_plasma_virtual_desktop_send_activated(resource);
-      org_kde_plasma_virtual_desktop_send_done(resource);
-    }
+    auto* desktop =
+        static_cast<VirtualDesktop*>(wl_resource_get_user_data(resource));
+    if (desktop == nullptr) return;
+    desktop->manager->compositor->SwitchWorkspace(desktop->index);
   }
 
   static void RemoveDesktop(wl_resource* resource) {
+    auto* desktop =
+        static_cast<VirtualDesktop*>(wl_resource_get_user_data(resource));
+    if (desktop == nullptr) return;
+    std::erase(desktop->manager->desktop_resources, desktop);
+    delete desktop;
+  }
+
+  static void RequestCreateVirtualDesktop(wl_client*, wl_resource* resource,
+                                          const char*, uint32_t) {
     auto* manager = static_cast<Impl*>(wl_resource_get_user_data(resource));
-    if (manager != nullptr) {
-      std::erase(manager->desktop_resources, resource);
+    manager->compositor->AddWorkspace();
+  }
+
+  static void RequestRemoveVirtualDesktop(wl_client*, wl_resource* resource,
+                                          const char* id) {
+    auto* manager = static_cast<Impl*>(wl_resource_get_user_data(resource));
+    const std::optional<int> index = DesktopIndex(Safe(id));
+    if (index.has_value() && *index < manager->compositor->workspace_count_) {
+      manager->compositor->RemoveWorkspace(*index);
     }
-  }
-
-  static void RequestCreateVirtualDesktop(wl_client*, wl_resource*, const char*,
-                                          uint32_t) {
-    // FlakeWM currently has one workspace.  The protocol accurately exposes
-    // that model and rejects expansion by leaving the request unanswered.
-  }
-
-  static void RequestRemoveVirtualDesktop(wl_client*, wl_resource*,
-                                          const char*) {
-    // The final desktop may not be removed.
   }
 
   static void BindShell(wl_client* client, void* data, uint32_t version,
@@ -815,7 +890,8 @@ class KdeProtocolManager::Impl final {
       for (const std::unique_ptr<PlasmaWindow>& window : manager->windows) {
         core::CompositorPrivate::Toplevel* toplevel =
             manager->compositor->ToplevelForSurface(window->surface);
-        if (toplevel != nullptr && !toplevel->minimized) {
+        if (toplevel != nullptr && !toplevel->minimized &&
+            toplevel->workspace == manager->compositor->current_workspace_) {
           manager->show_desktop_surfaces.push_back(window->surface);
           manager->compositor->protocol_manager_->RequestMinimize(
               window->surface, true);
@@ -885,10 +961,28 @@ class KdeProtocolManager::Impl final {
           (state & ORG_KDE_PLASMA_WINDOW_MANAGEMENT_STATE_FULLSCREEN) != 0,
           nullptr);
     }
+    if ((flags & ORG_KDE_PLASMA_WINDOW_MANAGEMENT_STATE_KEEP_ABOVE) != 0) {
+      core::CompositorPrivate::Toplevel* toplevel =
+          window->manager->compositor->ToplevelForSurface(window->surface);
+      window->manager->compositor->SetKeptAbove(
+          toplevel,
+          (state & ORG_KDE_PLASMA_WINDOW_MANAGEMENT_STATE_KEEP_ABOVE) != 0);
+    }
     window->manager->UpdateToplevel(window->surface);
   }
 
-  static void NoopVirtualDesktop(wl_client*, wl_resource*, uint32_t) {}
+  static void SetVirtualDesktop(wl_client*, wl_resource* resource,
+                                uint32_t number) {
+    auto* window =
+        static_cast<PlasmaWindow*>(wl_resource_get_user_data(resource));
+    if (window == nullptr ||
+        number >= static_cast<uint32_t>(
+                      window->manager->compositor->workspace_count_)) return;
+    core::CompositorPrivate::Toplevel* toplevel =
+        window->manager->compositor->ToplevelForSurface(window->surface);
+    window->manager->compositor->MoveToplevelToWorkspace(
+        toplevel, static_cast<int>(number));
+  }
   static void NoopMinimizedGeometry(wl_client*, wl_resource*, wl_resource*,
                                     uint32_t, uint32_t, uint32_t, uint32_t) {}
   static void NoopUnsetMinimizedGeometry(wl_client*, wl_resource*,
@@ -908,6 +1002,17 @@ class KdeProtocolManager::Impl final {
     wl_resource_destroy(resource);
   }
   static void GetWindowIcon(wl_client*, wl_resource*, int32_t fd) { close(fd); }
+  static void EnterVirtualDesktop(wl_client*, wl_resource* resource,
+                                  const char* desktop_id) {
+    auto* window =
+        static_cast<PlasmaWindow*>(wl_resource_get_user_data(resource));
+    const std::optional<int> index = DesktopIndex(Safe(desktop_id));
+    if (window == nullptr || !index.has_value() ||
+        *index >= window->manager->compositor->workspace_count_) return;
+    core::CompositorPrivate::Toplevel* toplevel =
+        window->manager->compositor->ToplevelForSurface(window->surface);
+    window->manager->compositor->MoveToplevelToWorkspace(toplevel, *index);
+  }
   static void NoopDesktopId(wl_client*, wl_resource*, const char*) {}
   static void NoopSendToOutput(wl_client*, wl_resource*, wl_resource*) {}
 
@@ -923,7 +1028,7 @@ class KdeProtocolManager::Impl final {
                          uint32_t id, PlasmaWindow* window) {
     static const struct org_kde_plasma_window_interface implementation = {
         .set_state = SetWindowState,
-        .set_virtual_desktop = NoopVirtualDesktop,
+        .set_virtual_desktop = SetVirtualDesktop,
         .set_minimized_geometry = NoopMinimizedGeometry,
         .unset_minimized_geometry = NoopUnsetMinimizedGeometry,
         .close = CloseWindow,
@@ -931,7 +1036,7 @@ class KdeProtocolManager::Impl final {
         .request_resize = NoopWindowRequest,
         .destroy = DestroyWindowRequest,
         .get_icon = GetWindowIcon,
-        .request_enter_virtual_desktop = NoopDesktopId,
+        .request_enter_virtual_desktop = EnterVirtualDesktop,
         .request_enter_new_virtual_desktop = NoopWindowRequest,
         .request_leave_virtual_desktop = NoopDesktopId,
         .request_enter_activity = NoopDesktopId,
@@ -971,8 +1076,7 @@ class KdeProtocolManager::Impl final {
     if (toplevel == nullptr) {
       return 0;
     }
-    uint32_t state = ORG_KDE_PLASMA_WINDOW_MANAGEMENT_STATE_ON_ALL_DESKTOPS |
-                     ORG_KDE_PLASMA_WINDOW_MANAGEMENT_STATE_CLOSEABLE |
+    uint32_t state = ORG_KDE_PLASMA_WINDOW_MANAGEMENT_STATE_CLOSEABLE |
                      ORG_KDE_PLASMA_WINDOW_MANAGEMENT_STATE_MOVABLE |
                      ORG_KDE_PLASMA_WINDOW_MANAGEMENT_STATE_RESIZABLE;
     if (seat->keyboard_state.focused_surface == window->surface) {
@@ -983,6 +1087,9 @@ class KdeProtocolManager::Impl final {
     }
     if (toplevel->maximized) {
       state |= ORG_KDE_PLASMA_WINDOW_MANAGEMENT_STATE_MAXIMIZED;
+    }
+    if (toplevel->kept_above) {
+      state |= ORG_KDE_PLASMA_WINDOW_MANAGEMENT_STATE_KEEP_ABOVE;
     }
     if (toplevel->RequestedFullscreen()) {
       state |= ORG_KDE_PLASMA_WINDOW_MANAGEMENT_STATE_FULLSCREEN;
@@ -1039,7 +1146,15 @@ class KdeProtocolManager::Impl final {
     }
     if (wl_resource_get_version(resource) >=
         ORG_KDE_PLASMA_WINDOW_VIRTUAL_DESKTOP_ENTERED_SINCE_VERSION) {
-      org_kde_plasma_window_send_virtual_desktop_entered(resource, kDesktopId);
+      for (int index = 0; index < compositor->workspace_count_; ++index) {
+        if (index == toplevel->workspace) continue;
+        const std::string other_desktop = DesktopId(index);
+        org_kde_plasma_window_send_virtual_desktop_left(resource,
+                                                        other_desktop.c_str());
+      }
+      const std::string desktop_id = DesktopId(toplevel->workspace);
+      org_kde_plasma_window_send_virtual_desktop_entered(resource,
+                                                         desktop_id.c_str());
     }
   }
 
@@ -1247,7 +1362,8 @@ class KdeProtocolManager::Impl final {
   std::vector<Keyboard*> keyboards;
   std::vector<wl_resource*> keystate_resources;
   std::vector<wl_resource*> desktop_management_resources;
-  std::vector<wl_resource*> desktop_resources;
+  std::vector<VirtualDesktop*> desktop_resources;
+  int announced_workspace_count = 4;
   std::vector<PlasmaSurface*> plasma_surfaces;
   std::vector<std::unique_ptr<PlasmaWindow>> windows;
   std::vector<wl_resource*> window_management_resources;
@@ -1294,6 +1410,8 @@ void KdeProtocolManager::UnmapToplevel(wlr_surface* surface) {
 void KdeProtocolManager::UpdateToplevel(wlr_surface* surface) {
   impl_->UpdateToplevel(surface);
 }
+
+void KdeProtocolManager::UpdateWorkspaces() { impl_->UpdateWorkspaces(); }
 
 void KdeProtocolManager::SetGlobalBlur(bool enabled, int strength) {
   impl_->global_blur_enabled = enabled;

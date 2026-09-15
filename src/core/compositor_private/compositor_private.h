@@ -35,9 +35,12 @@
 #include "src/protocol/protocol_manager/protocol_manager.h"
 #include "src/utils/args_handler/args_handler.h"
 #include "src/utils/signal_listener.h"
+#include "src/view/app_switcher/app_switcher.h"
+#include "src/view/multitasking/multitasking.h"
 #include "src/view/ssd/ssd/ssd.h"
 #include "src/view/ssd/ssd_surface_clip/ssd_surface_clip.h"
 #include "src/view/touch_feedback.h"
+#include "src/view/window_previews/window_previews.h"
 #include "src/view/window_selecter/window_selector.h"
 #include "src/wlr_wrapper/wlroots.h"
 
@@ -151,6 +154,8 @@ class CompositorPrivate final {
     kNative,
     kPointer,
     kSelector,
+    kMultitasking,
+    kWindowPreviews,
     kIgnored
   };
 
@@ -227,6 +232,8 @@ class CompositorPrivate final {
     bool mapped = false;
     bool maximized = false;
     bool minimized = false;
+    bool kept_above = false;
+    int workspace = 0;
     bool has_restore_box = false;
     bool restore_position_pending = false;
     bool capabilities_advertised = false;
@@ -288,7 +295,15 @@ class CompositorPrivate final {
   view::Ssd::HitTarget SsdHitAt(const Toplevel* toplevel) const;
   void FocusToplevel(Toplevel* toplevel);
   void FocusNextToplevel(Toplevel* excluding);
-  void CycleToplevel(bool reverse);
+  bool IsToplevelVisible(const Toplevel* toplevel) const;
+  void SwitchWorkspace(int workspace);
+  bool MoveToplevelToWorkspace(Toplevel* toplevel, int workspace);
+  bool AddWorkspace();
+  bool RemoveWorkspace(int workspace);
+  bool ReorderWorkspace(int from, int to);
+  void SetKeptAbove(Toplevel* toplevel, bool kept_above);
+  void SetMultitaskingSourcesHidden(bool hidden);
+  void SetWindowPreviewsSourcesHidden(bool hidden);
   void FocusLayerSurface(LayerSurface* layer_surface);
   LayerSurface* LayerSurfaceFor(wlr_surface* surface) const;
   Output* FindOutput(wlr_output* output) const;
@@ -380,6 +395,9 @@ class CompositorPrivate final {
   std::unique_ptr<input::KeyBindingManager> key_binding_manager_;
   std::unique_ptr<dbus::WlcomDbusManager> dbus_manager_;
   std::unique_ptr<view::TouchFeedback> touch_feedback_;
+  std::unique_ptr<view::AppSwitcher> app_switcher_;
+  std::unique_ptr<view::Multitasking> multitasking_;
+  std::unique_ptr<view::WindowPreviews> window_previews_;
   std::unique_ptr<view::WindowSelector> window_selector_;
   std::unique_ptr<xwayland::XWaylandManager> xwayland_;
   wlr_seat* seat_ = nullptr;
@@ -445,6 +463,12 @@ class CompositorPrivate final {
   std::vector<std::unique_ptr<Toplevel>> toplevels_;
   std::vector<std::unique_ptr<LayerSurface>> layer_surfaces_;
   std::vector<std::unique_ptr<Popup>> popups_;
+  static constexpr int kInitialWorkspaceCount = 4;
+  static constexpr int kMaximumWorkspaceCount = 6;
+  int workspace_count_ = kInitialWorkspaceCount;
+  int current_workspace_ = 0;
+  bool multitasking_sources_hidden_ = false;
+  bool window_previews_sources_hidden_ = false;
   CursorMode cursor_mode_ = CursorMode::kPassthrough;
   Toplevel* grabbed_toplevel_ = nullptr;
   double grab_x_ = 0;

@@ -26,7 +26,9 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 
 #include "protocol/ukui-window-management-protocol.h"
 #include "src/core/compositor_private/compositor_private.h"
@@ -36,9 +38,21 @@
 namespace flakewm {
 namespace protocol {
 namespace {
-using ukui_internal::kDesktopId;
 using ukui_internal::kWindowVersion;
 using ukui_internal::Safe;
+
+constexpr int kMaximumDesktopCount = 6;
+
+std::string DesktopId(int index) {
+  return "flakewm-desktop-" + std::to_string(index + 1);
+}
+
+std::optional<int> DesktopIndex(std::string_view id) {
+  for (int index = 0; index < kMaximumDesktopCount; ++index) {
+    if (id == DesktopId(index)) return index;
+  }
+  return std::nullopt;
+}
 }  // namespace
 
 void UkuiProtocolManager::Impl::BindWindowManagement(wl_client* client,
@@ -90,7 +104,8 @@ void UkuiProtocolManager::Impl::ShowDesktop(wl_client*, wl_resource* resource,
     for (const std::unique_ptr<Window>& window : manager->windows) {
       core::CompositorPrivate::Toplevel* toplevel =
           manager->compositor->ToplevelForSurface(window->surface);
-      if (toplevel != nullptr && !toplevel->minimized) {
+      if (toplevel != nullptr && !toplevel->minimized &&
+          toplevel->workspace == manager->compositor->current_workspace_) {
         manager->show_desktop_surfaces.push_back(window->surface);
         manager->compositor->protocol_manager_->RequestMinimize(window->surface,
                                                                 true);
@@ -143,18 +158,19 @@ void UkuiProtocolManager::Impl::SetWindowState(wl_client*,
         window->surface, (state & UKUI_WINDOW_STATE_FULLSCREEN) != 0, nullptr);
   }
   constexpr uint32_t kExtraMask =
-      UKUI_WINDOW_STATE_KEEP_ABOVE | UKUI_WINDOW_STATE_KEEP_BELOW |
+      UKUI_WINDOW_STATE_KEEP_BELOW |
       UKUI_WINDOW_STATE_DEMANDS_ATTENTION | UKUI_WINDOW_STATE_SKIPTASKBAR |
       UKUI_WINDOW_STATE_SKIPSWITCHER | UKUI_WINDOW_STATE_MODALITY;
   window->extra_state = (window->extra_state & ~(flags & kExtraMask)) |
                         (state & flags & kExtraMask);
   core::CompositorPrivate::Toplevel* toplevel =
       window->manager->compositor->ToplevelForSurface(window->surface);
-  if (toplevel != nullptr && toplevel->scene_tree != nullptr) {
-    if ((flags & UKUI_WINDOW_STATE_KEEP_ABOVE) != 0 &&
-        (state & UKUI_WINDOW_STATE_KEEP_ABOVE) != 0) {
-      wlr_scene_node_raise_to_top(&toplevel->scene_tree->node);
-    } else if ((flags & UKUI_WINDOW_STATE_KEEP_BELOW) != 0 &&
+  if (toplevel != nullptr) {
+    if ((flags & UKUI_WINDOW_STATE_KEEP_ABOVE) != 0) {
+      window->manager->compositor->SetKeptAbove(
+          toplevel, (state & UKUI_WINDOW_STATE_KEEP_ABOVE) != 0);
+    } else if (toplevel->scene_tree != nullptr &&
+               (flags & UKUI_WINDOW_STATE_KEEP_BELOW) != 0 &&
                (state & UKUI_WINDOW_STATE_KEEP_BELOW) != 0) {
       wlr_scene_node_lower_to_bottom(&toplevel->scene_tree->node);
     }
@@ -216,6 +232,17 @@ void UkuiProtocolManager::Impl::GetWindowIcon(wl_client*, wl_resource*,
 }
 void UkuiProtocolManager::Impl::NoopDesktopId(wl_client*, wl_resource*,
                                               const char*) {}
+void UkuiProtocolManager::Impl::EnterVirtualDesktop(wl_client*,
+                                                    wl_resource* resource,
+                                                    const char* id) {
+  Window* window = WindowFromResource(resource);
+  const std::optional<int> index = DesktopIndex(Safe(id));
+  if (window == nullptr || !index.has_value() ||
+      *index >= window->manager->compositor->workspace_count_) return;
+  core::CompositorPrivate::Toplevel* toplevel =
+      window->manager->compositor->ToplevelForSurface(window->surface);
+  window->manager->compositor->MoveToplevelToWorkspace(toplevel, *index);
+}
 void UkuiProtocolManager::Impl::NoopWindowRequest(wl_client*, wl_resource*) {}
 
 // The callback parameter order is fixed by the generated Wayland ABI.
@@ -280,7 +307,7 @@ void UkuiProtocolManager::Impl::AddWindowResource(wl_client* client,
       .request_resize = ResizeWindow,
       .destroy = DestroyResourceRequest,
       .get_icon = GetWindowIcon,
-      .request_enter_virtual_desktop = NoopDesktopId,
+      .request_enter_virtual_desktop = EnterVirtualDesktop,
       .request_enter_new_virtual_desktop = NoopWindowRequest,
       .request_leave_virtual_desktop = NoopDesktopId,
       .request_enter_activity = NoopDesktopId,
@@ -313,15 +340,16 @@ uint32_t UkuiProtocolManager::Impl::WindowState(Window* window) const {
   if (toplevel == nullptr) {
     return window->extra_state;
   }
-  uint32_t state = window->extra_state | UKUI_WINDOW_STATE_ON_ALL_DESKTOPS |
-                   UKUI_WINDOW_STATE_CLOSEABLE | UKUI_WINDOW_STATE_MOVABLE |
-                   UKUI_WINDOW_STATE_RESIZABLE | UKUI_WINDOW_STATE_ACCEPT_FOCUS;
+  uint32_t state = window->extra_state | UKUI_WINDOW_STATE_CLOSEABLE |
+                   UKUI_WINDOW_STATE_MOVABLE | UKUI_WINDOW_STATE_RESIZABLE |
+                   UKUI_WINDOW_STATE_ACCEPT_FOCUS;
   if (seat != nullptr &&
       seat->keyboard_state.focused_surface == window->surface) {
     state |= UKUI_WINDOW_STATE_ACTIVE;
   }
   if (toplevel->minimized) state |= UKUI_WINDOW_STATE_MINIMIZED;
   if (toplevel->maximized) state |= UKUI_WINDOW_STATE_MAXIMIZED;
+  if (toplevel->kept_above) state |= UKUI_WINDOW_STATE_KEEP_ABOVE;
   if (toplevel->RequestedFullscreen()) state |= UKUI_WINDOW_STATE_FULLSCREEN;
   if (toplevel->CanMinimize()) state |= UKUI_WINDOW_STATE_MINIMIZABLE;
   if (toplevel->CanMaximize()) state |= UKUI_WINDOW_STATE_MAXIMIZABLE;
@@ -360,7 +388,13 @@ void UkuiProtocolManager::Impl::SendWindow(wl_resource* resource,
   ukui_window_send_geometry(resource, x, y, std::max(geometry.width, 0),
                             std::max(geometry.height, 0));
   ukui_window_send_themed_icon_name_changed(resource, Safe(toplevel->AppId()));
-  ukui_window_send_virtual_desktop_entered(resource, kDesktopId);
+  for (int index = 0; index < compositor->workspace_count_; ++index) {
+    if (index == toplevel->workspace) continue;
+    const std::string other_desktop = DesktopId(index);
+    ukui_window_send_virtual_desktop_left(resource, other_desktop.c_str());
+  }
+  const std::string desktop_id = DesktopId(toplevel->workspace);
+  ukui_window_send_virtual_desktop_entered(resource, desktop_id.c_str());
   Window* parent = window->parent;
   wl_resource* parent_resource = nullptr;
   if (parent != nullptr) {

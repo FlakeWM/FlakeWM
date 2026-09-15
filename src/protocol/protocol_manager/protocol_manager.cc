@@ -650,6 +650,10 @@ void ProtocolManager::UpdateToplevel(wlr_surface* surface) {
       toplevel->scene_tree->node.y + frame.y + frame.height / 2.0));
 }
 
+void ProtocolManager::UpdateWorkspaces() {
+  if (kde_protocols_ != nullptr) kde_protocols_->UpdateWorkspaces();
+}
+
 void ProtocolManager::SetGlobalBlur(bool enabled, int strength) {
   if (kde_protocols_ != nullptr) {
     kde_protocols_->SetGlobalBlur(enabled, strength);
@@ -689,7 +693,8 @@ void ProtocolManager::RequestMinimize(wlr_surface* surface, bool minimized) {
   toplevel->minimized = false;
   toplevel->SetMinimizedState(false);
   if (toplevel->scene_tree != nullptr) {
-    wlr_scene_node_set_enabled(&toplevel->scene_tree->node, true);
+    wlr_scene_node_set_enabled(&toplevel->scene_tree->node,
+                               compositor_->IsToplevelVisible(toplevel));
   }
 }
 

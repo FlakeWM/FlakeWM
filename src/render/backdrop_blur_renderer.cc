@@ -152,12 +152,29 @@ class BackdropBlurRenderer::Impl {
     float offset;
   };
 
+  struct TextureBlur {
+    TextureBlur(const void* new_owner, wlr_texture* new_texture,
+                const pixman_region32_t* new_region, float new_offset)
+        : owner(new_owner), texture(new_texture), offset(new_offset) {
+      pixman_region32_init(&region);
+      pixman_region32_copy(&region, new_region);
+    }
+
+    ~TextureBlur() { pixman_region32_fini(&region); }
+
+    const void* owner;
+    wlr_texture* texture;
+    pixman_region32_t region;
+    float offset;
+  };
+
   struct RenderPass {
     wlr_render_pass base;
     Impl* renderer;
     wlr_render_pass* inner;
     wlr_buffer* target;
     std::unordered_set<wlr_surface*> rendered_blurs;
+    std::unordered_set<const void*> rendered_texture_blurs;
     wlr_buffer_pass_options intermediate_options = {};
     wlr_buffer_pass_options final_options = {};
     bool deferred_completion = false;
@@ -206,6 +223,26 @@ class BackdropBlurRenderer::Impl {
     });
   }
 
+  void SetTextureBlur(const void* owner, wlr_texture* texture,
+                      const pixman_region32_t* region, float offset) {
+    auto found = std::find_if(
+        textures_blur.begin(), textures_blur.end(),
+        [owner](const auto& item) { return item->owner == owner; });
+    if (found == textures_blur.end()) {
+      textures_blur.push_back(
+          std::make_unique<TextureBlur>(owner, texture, region, offset));
+      return;
+    }
+    (*found)->texture = texture;
+    pixman_region32_copy(&(*found)->region, region);
+    (*found)->offset = offset;
+  }
+
+  void ClearTextureBlur(const void* owner) {
+    std::erase_if(textures_blur,
+                  [owner](const auto& item) { return item->owner == owner; });
+  }
+
  private:
   static Impl* FromRenderer(wlr_renderer* renderer) {
     return reinterpret_cast<Impl*>(renderer);
@@ -243,7 +280,8 @@ class BackdropBlurRenderer::Impl {
       const wlr_buffer_pass_options* options) {
     Impl* self = FromRenderer(renderer);
     const bool defer_completion =
-        self->vulkan_blur != nullptr && !self->surfaces.empty() &&
+        self->vulkan_blur != nullptr &&
+        (!self->surfaces.empty() || !self->textures_blur.empty()) &&
         options != nullptr &&
         (options->timer != nullptr || options->signal_timeline != nullptr);
     auto* pass = new RenderPass{
@@ -490,42 +528,74 @@ class BackdropBlurRenderer::Impl {
     return result;
   }
 
-  void ApplySurfaceBlur(RenderPass* pass,
-                        const wlr_render_texture_options* options) {
-    auto found = std::find_if(
-        surfaces.begin(), surfaces.end(), [options, pass](const auto& item) {
-          return !pass->rendered_blurs.contains(item->surface) &&
-                 wlr_surface_get_texture(item->surface) == options->texture;
-        });
-    if (found == surfaces.end() || pass->target->width <= 0 ||
-        pass->target->height <= 0) {
-      return;
+  pixman_region32_t TextureRegion(const TextureBlur& blur,
+                                  const wlr_render_texture_options& options,
+                                  int target_width, int target_height) const {
+    pixman_region32_t result;
+    pixman_region32_init(&result);
+    const wlr_box destination = options.dst_box;
+    if (pixman_region32_empty(&blur.region)) {
+      pixman_region32_union_rect(&result, &result, destination.x, destination.y,
+                                 destination.width, destination.height);
+    } else {
+      const int texture_width =
+          std::max(static_cast<int>(blur.texture->width), 1);
+      const int texture_height =
+          std::max(static_cast<int>(blur.texture->height), 1);
+      pixman_region32_t bounded_region;
+      pixman_region32_init_rect(&bounded_region, 0, 0, texture_width,
+                                texture_height);
+      pixman_region32_intersect(&bounded_region, &bounded_region, &blur.region);
+      int rectangle_count = 0;
+      const pixman_box32_t* rectangles =
+          pixman_region32_rectangles(&bounded_region, &rectangle_count);
+      for (int i = 0; i < rectangle_count; ++i) {
+        const int x1 =
+            destination.x +
+            static_cast<int>(std::floor(static_cast<double>(rectangles[i].x1) *
+                                        destination.width / texture_width));
+        const int y1 =
+            destination.y +
+            static_cast<int>(std::floor(static_cast<double>(rectangles[i].y1) *
+                                        destination.height / texture_height));
+        const int x2 =
+            destination.x +
+            static_cast<int>(std::ceil(static_cast<double>(rectangles[i].x2) *
+                                       destination.width / texture_width));
+        const int y2 =
+            destination.y +
+            static_cast<int>(std::ceil(static_cast<double>(rectangles[i].y2) *
+                                       destination.height / texture_height));
+        pixman_region32_union_rect(&result, &result, x1, y1,
+                                   std::max(0, x2 - x1), std::max(0, y2 - y1));
+      }
+      pixman_region32_fini(&bounded_region);
     }
-    SurfaceBlur& blur = **found;
-    pass->rendered_blurs.insert(blur.surface);
+    pixman_region32_intersect_rect(&result, &result, 0, 0, target_width,
+                                   target_height);
+    if (options.clip != nullptr) {
+      pixman_region32_intersect(&result, &result, options.clip);
+    }
+    return result;
+  }
 
-    pixman_region32_t clip = SurfaceRegion(blur, *options, pass->target->width,
-                                           pass->target->height);
-    if (pixman_region32_empty(&clip)) {
-      pixman_region32_fini(&clip);
-      return;
-    }
+  void ApplyRegionBlur(RenderPass* pass, pixman_region32_t* clip,
+                       float offset) {
+    if (pixman_region32_empty(clip)) return;
 
     if (vulkan_blur != nullptr) {
       const bool submitted = wlr_render_pass_submit(pass->inner);
       pass->inner = nullptr;
       if (!submitted) {
         pass->failed = true;
-        pixman_region32_fini(&clip);
         return;
       }
 
-      wlr_texture* blurred = vulkan_blur->Render(pass->target, blur.offset);
+      wlr_texture* blurred = vulkan_blur->Render(pass->target, offset);
       pass->inner = wlr_renderer_begin_buffer_pass(inner, pass->target,
                                                    &pass->intermediate_options);
       if (pass->inner == nullptr) {
         pass->failed = true;
-        pixman_region32_fini(&clip);
         return;
       }
       if (blurred != nullptr) {
@@ -538,14 +608,13 @@ class BackdropBlurRenderer::Impl {
                     .width = pass->target->width,
                     .height = pass->target->height,
                 },
-            .clip = &clip,
+            .clip = clip,
             .filter_mode = WLR_SCALE_FILTER_BILINEAR,
             .blend_mode = WLR_RENDER_BLEND_MODE_NONE,
             .transfer_function = WLR_COLOR_TRANSFER_FUNCTION_GAMMA22,
         };
         wlr_render_pass_add_texture(pass->inner, &blur_options);
       }
-      pixman_region32_fini(&clip);
       return;
     }
 
@@ -553,7 +622,6 @@ class BackdropBlurRenderer::Impl {
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &output_framebuffer);
     if (!EnsureGlResources(pass->target->width, pass->target->height)) {
       glBindFramebuffer(GL_FRAMEBUFFER, output_framebuffer);
-      pixman_region32_fini(&clip);
       return;
     }
 
@@ -561,7 +629,7 @@ class BackdropBlurRenderer::Impl {
     glBindTexture(GL_TEXTURE_2D, textures[0]);
     glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, target_width,
                         target_height);
-    const float safe_offset = std::clamp(blur.offset, 0.001F, 64.0F);
+    const float safe_offset = std::clamp(offset, 0.001F, 64.0F);
     const float horizontal = safe_offset / target_width;
     const float vertical = safe_offset / target_height;
     constexpr uint32_t kIterations = 3;
@@ -570,11 +638,43 @@ class BackdropBlurRenderer::Impl {
       DrawTexture(textures[1], framebuffers[0], 0, vertical, nullptr);
     }
     DrawTexture(textures[0], static_cast<GLuint>(output_framebuffer), 0, 0,
-                &clip);
+                clip);
     glBindFramebuffer(GL_FRAMEBUFFER, output_framebuffer);
     glViewport(0, 0, target_width, target_height);
     glBindTexture(GL_TEXTURE_2D, 0);
     glUseProgram(0);
+  }
+
+  void ApplySurfaceBlur(RenderPass* pass,
+                        const wlr_render_texture_options* options) {
+    if (pass->target->width <= 0 || pass->target->height <= 0) return;
+    auto found = std::find_if(
+        surfaces.begin(), surfaces.end(), [options, pass](const auto& item) {
+          return !pass->rendered_blurs.contains(item->surface) &&
+                 wlr_surface_get_texture(item->surface) == options->texture;
+        });
+    if (found != surfaces.end()) {
+      SurfaceBlur& blur = **found;
+      pass->rendered_blurs.insert(blur.surface);
+      pixman_region32_t clip = SurfaceRegion(
+          blur, *options, pass->target->width, pass->target->height);
+      ApplyRegionBlur(pass, &clip, blur.offset);
+      pixman_region32_fini(&clip);
+      return;
+    }
+
+    auto texture = std::find_if(
+        textures_blur.begin(), textures_blur.end(),
+        [options, pass](const auto& item) {
+          return !pass->rendered_texture_blurs.contains(item->owner) &&
+                 item->texture == options->texture;
+        });
+    if (texture == textures_blur.end()) return;
+    TextureBlur& blur = **texture;
+    pass->rendered_texture_blurs.insert(blur.owner);
+    pixman_region32_t clip = TextureRegion(blur, *options, pass->target->width,
+                                           pass->target->height);
+    ApplyRegionBlur(pass, &clip, blur.offset);
     pixman_region32_fini(&clip);
   }
 
@@ -609,6 +709,7 @@ class BackdropBlurRenderer::Impl {
   wlr_renderer* inner = nullptr;
   std::unique_ptr<VulkanBlurPipeline> vulkan_blur;
   std::vector<std::unique_ptr<SurfaceBlur>> surfaces;
+  std::vector<std::unique_ptr<TextureBlur>> textures_blur;
   GLuint program = 0;
   GLint image_uniform = -1;
   GLint direction_uniform = -1;
@@ -660,7 +761,7 @@ wlr_renderer* BackdropBlurRenderer::Handle() const { return &impl_->base; }
 bool BackdropBlurRenderer::IsSupported() const { return impl_->IsSupported(); }
 
 bool BackdropBlurRenderer::HasActiveBlur() const {
-  return !impl_->surfaces.empty();
+  return !impl_->surfaces.empty() || !impl_->textures_blur.empty();
 }
 
 void BackdropBlurRenderer::SetAllocator(wlr_allocator* allocator) {
@@ -677,6 +778,19 @@ void BackdropBlurRenderer::SetSurfaceBlur(wlr_surface* surface,
 
 void BackdropBlurRenderer::ClearSurfaceBlur(wlr_surface* surface) {
   impl_->ClearSurfaceBlur(surface);
+}
+
+void BackdropBlurRenderer::SetTextureBlur(const void* owner,
+                                          wlr_texture* texture,
+                                          const pixman_region32_t* region,
+                                          float offset) {
+  if (owner != nullptr && texture != nullptr && region != nullptr) {
+    impl_->SetTextureBlur(owner, texture, region, offset);
+  }
+}
+
+void BackdropBlurRenderer::ClearTextureBlur(const void* owner) {
+  impl_->ClearTextureBlur(owner);
 }
 
 }  // namespace render

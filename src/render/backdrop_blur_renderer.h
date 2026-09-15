@@ -49,6 +49,9 @@ class BackdropBlurRenderer final {
   void SetSurfaceBlur(wlr_surface* surface, const pixman_region32_t* region,
                       float offset);
   void ClearSurfaceBlur(wlr_surface* surface);
+  void SetTextureBlur(const void* owner, wlr_texture* texture,
+                      const pixman_region32_t* region, float offset);
+  void ClearTextureBlur(const void* owner);
 
  private:
   class Impl;
