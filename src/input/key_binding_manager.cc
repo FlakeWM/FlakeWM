@@ -23,12 +23,12 @@
  * Original code is modified to adapt C++ and Wlroots 0.20.2.
  */
 
+#include "src/input/key_binding_manager.h"
+
 #include <algorithm>
 #include <cctype>
 #include <string_view>
 #include <utility>
-
-#include "src/input/key_binding_manager.h"
 
 namespace flakewm {
 namespace input {
@@ -331,8 +331,12 @@ KeyBindingManager::ParseShortcut(const std::string& shortcut) {
     const std::size_t separator = binding.find('+', start);
     const std::string_view part =
         Trim(binding.substr(start, separator - start));
+    // GXWM's binding parser accepts the doubled '+' spelling emitted by some
+    // versions of the control centre (for example Ctrl++Alt++Win+h).
     if (part.empty()) {
-      return std::nullopt;
+      if (separator == std::string_view::npos) return std::nullopt;
+      start = separator + 1;
+      continue;
     }
     if (const std::optional<uint32_t> modifier = ModifierForName(part);
         modifier.has_value()) {

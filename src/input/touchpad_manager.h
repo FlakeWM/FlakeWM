@@ -27,8 +27,11 @@
 #define SRC_INPUT_TOUCHPAD_MANAGER_H_
 
 #include <QDBusConnection>
+#include <QTimer>
 #include <cstdint>
+#include <functional>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "src/wlr_wrapper/wlroots.h"
@@ -42,6 +45,11 @@ namespace input {
 
 class TouchpadManager final {
  public:
+  using GestureHandler = std::function<bool(
+      const char* type, const char* device, const char* direction,
+      std::uint32_t fingers, const char* edge, const char* stage,
+      const char* follow_direction, double dx, double dy)>;
+
   TouchpadManager();
   ~TouchpadManager();
 
@@ -59,6 +67,10 @@ class TouchpadManager final {
   bool EndPinch(bool cancelled);
   void BeginHold(std::uint32_t fingers);
   bool EndHold(bool cancelled);
+  void TouchDown(wlr_touch* touch, std::int32_t id, double x, double y);
+  void TouchMotion(wlr_touch* touch, std::int32_t id, double x, double y);
+  void TouchUp(wlr_touch* touch, std::int32_t id, bool cancelled);
+  void SetGestureHandler(GestureHandler handler);
 
  private:
   struct Device;
@@ -84,6 +96,23 @@ class TouchpadManager final {
     double delta_y = 0;
     double scale = 1;
     double rotation = 0;
+    double follow_dx = 0;
+    double follow_dy = 0;
+    std::string direction = "none";
+    bool triggered = false;
+    bool handled = false;
+  };
+
+  struct TouchPoint {
+    wlr_touch* touch = nullptr;
+    std::int32_t id = 0;
+    double initial_x = 0;
+    double initial_y = 0;
+    double x = 0;
+    double y = 0;
+    double last_x = 0;
+    double last_y = 0;
+    bool moved = false;
   };
 
   void LoadSettings();
@@ -91,7 +120,12 @@ class TouchpadManager final {
   void ApplySettings(Device* device);
   const Device* FindDevice(const wlr_pointer* pointer) const;
   bool ExecuteGesture(const char* name, const char* direction,
-                      std::uint32_t fingers) const;
+                      std::uint32_t fingers, const char* stage = "trigger",
+                      const char* follow_direction = "none", double dx = 0,
+                      double dy = 0, const char* device = "touchpad",
+                      const char* edge = "none") const;
+  const char* TouchEdge() const;
+  void ResetTouchGesture();
   void ResetGesture();
 
   QDBusConnection gesture_connection_;
@@ -102,6 +136,10 @@ class TouchpadManager final {
   std::vector<std::unique_ptr<Device>> devices_;
   Settings settings_;
   GestureState gesture_;
+  GestureState touch_gesture_;
+  std::vector<TouchPoint> touch_points_;
+  GestureHandler gesture_handler_;
+  QTimer touch_hold_timer_;
   bool gestures_enabled_ = true;
 };
 

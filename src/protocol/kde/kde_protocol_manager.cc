@@ -22,6 +22,8 @@
  * Original code is modified to adapt C++ and Wlroots 0.20.2.
  */
 
+#include "src/protocol/kde/kde_protocol_manager.h"
+
 #include <absl/log/absl_log.h>
 #include <unistd.h>
 
@@ -44,7 +46,6 @@
 #include "src/protocol/kde/kde_output_manager.h"
 #include "src/protocol/protocol_manager/protocol_manager.h"
 #include "src/render/backdrop_blur_renderer.h"
-#include "src/protocol/kde/kde_protocol_manager.h"
 
 namespace flakewm {
 namespace protocol {
@@ -1067,9 +1068,18 @@ class KdeProtocolManager::Impl final {
         compositor->backdrop_blur_renderer_ == nullptr) {
       return;
     }
-    const float offset = static_cast<int32_t>(blur->strength) == -1
-                             ? 2.6F
-                             : blur->strength / 1000.0F;
+    if (!global_blur_enabled) {
+      compositor->backdrop_blur_renderer_->ClearSurfaceBlur(blur->surface);
+      compositor->UpdateBackdropBlurState();
+      return;
+    }
+    static constexpr float offsets[] = {
+        1.5F, 2.0F,     2.5F,     3.0F, 2.6F,     3.2F,     3.8F, 4.4F,
+        5.0F, 3.83333F, 4.66667F, 5.5F, 6.33333F, 7.16667F, 8.0F};
+    const float offset =
+        static_cast<int32_t>(blur->strength) == -1
+            ? offsets[std::clamp(global_blur_strength, 1, 15) - 1]
+            : blur->strength / 1000.0F;
     compositor->backdrop_blur_renderer_->SetSurfaceBlur(
         blur->surface, &blur->current_region, std::max(offset, 0.001F));
     compositor->UpdateBackdropBlurState();
@@ -1243,6 +1253,8 @@ class KdeProtocolManager::Impl final {
   std::vector<wl_resource*> window_management_resources;
   std::vector<wlr_surface*> show_desktop_surfaces;
   std::vector<Blur*> blurs;
+  bool global_blur_enabled = true;
+  int global_blur_strength = 4;
   std::vector<ServerDecoration*> server_decorations;
 };
 
@@ -1281,6 +1293,14 @@ void KdeProtocolManager::UnmapToplevel(wlr_surface* surface) {
 
 void KdeProtocolManager::UpdateToplevel(wlr_surface* surface) {
   impl_->UpdateToplevel(surface);
+}
+
+void KdeProtocolManager::SetGlobalBlur(bool enabled, int strength) {
+  impl_->global_blur_enabled = enabled;
+  impl_->global_blur_strength = std::clamp(strength, 1, 15);
+  for (auto* blur : impl_->blurs) {
+    impl_->ApplyBlur(blur);
+  }
 }
 
 void KdeProtocolManager::UpdateToplevelParent(wlr_surface* surface,

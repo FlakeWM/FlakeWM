@@ -650,6 +650,12 @@ void ProtocolManager::UpdateToplevel(wlr_surface* surface) {
       toplevel->scene_tree->node.y + frame.y + frame.height / 2.0));
 }
 
+void ProtocolManager::SetGlobalBlur(bool enabled, int strength) {
+  if (kde_protocols_ != nullptr) {
+    kde_protocols_->SetGlobalBlur(enabled, strength);
+  }
+}
+
 void ProtocolManager::UpdateToplevelParent(wlr_surface* surface,
                                            wlr_surface* parent) {
   kde_protocols_->UpdateToplevelParent(surface, parent);

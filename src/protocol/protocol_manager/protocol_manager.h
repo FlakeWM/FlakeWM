@@ -26,6 +26,7 @@
 #define SRC_PROTOCOL_PROTOCOL_MANAGER_PROTOCOL_MANAGER_H_
 
 #include <memory>
+#include <utility>
 #include <unordered_map>
 #include <vector>
 
@@ -70,6 +71,15 @@ class ProtocolManager final {
   void NotifyPointer(uint32_t time_msec);
   void SendRelativeMotion(const wlr_pointer_motion_event& event);
   void NotifyTouch(wlr_surface* surface, uint32_t time_msec);
+  void TouchGestureDown(wlr_touch* touch, int32_t id, double x, double y) {
+    touchpad_manager_->TouchDown(touch, id, x, y);
+  }
+  void TouchGestureMotion(wlr_touch* touch, int32_t id, double x, double y) {
+    touchpad_manager_->TouchMotion(touch, id, x, y);
+  }
+  void TouchGestureUp(wlr_touch* touch, int32_t id, bool cancelled) {
+    touchpad_manager_->TouchUp(touch, id, cancelled);
+  }
   bool ShouldForwardAxis(const wlr_pointer_axis_event& event) const;
   bool WantsTearing(wlr_surface* surface) const;
   bool ShortcutsInhibited() const;
@@ -83,6 +93,10 @@ class ProtocolManager final {
   void UnmapToplevel(wlr_surface* surface);
   void UpdateToplevel(wlr_surface* surface);
   void UpdateToplevelParent(wlr_surface* surface, wlr_surface* parent);
+  void SetGlobalBlur(bool enabled, int strength);
+  void SetGestureHandler(input::TouchpadManager::GestureHandler handler) {
+    touchpad_manager_->SetGestureHandler(std::move(handler));
+  }
 
   void RequestMaximize(wlr_surface* surface, bool maximized);
   void RequestMinimize(wlr_surface* surface, bool minimized);

@@ -30,7 +30,6 @@
 
 #include "src/backend/backend/backend.h"
 #include "src/input/key_binding_manager.h"
-#include "src/input/shortcut_settings_service.h"
 #include "src/protocol/input_method/input_method_relay.h"
 #include "src/protocol/layer_shell/layer_surface.h"
 #include "src/protocol/protocol_manager/protocol_manager.h"
@@ -43,6 +42,9 @@
 #include "src/wlr_wrapper/wlroots.h"
 
 namespace flakewm {
+namespace dbus {
+class WlcomDbusManager;
+}
 namespace render {
 class BackdropBlurRenderer;
 }  // namespace render
@@ -74,6 +76,7 @@ class CompositorPrivate final {
   friend class protocol::UkuiProtocolManager;
   friend class xwayland::XSurface;
   friend class xwayland::XWaylandManager;
+  friend class dbus::WlcomDbusManager;
 
  public:
   CompositorPrivate();
@@ -375,7 +378,7 @@ class CompositorPrivate final {
   std::unique_ptr<protocol::InputMethodRelay> input_method_relay_;
   std::unique_ptr<protocol::ProtocolManager> protocol_manager_;
   std::unique_ptr<input::KeyBindingManager> key_binding_manager_;
-  std::unique_ptr<input::ShortcutSettingsService> shortcut_settings_service_;
+  std::unique_ptr<dbus::WlcomDbusManager> dbus_manager_;
   std::unique_ptr<view::TouchFeedback> touch_feedback_;
   std::unique_ptr<view::WindowSelector> window_selector_;
   std::unique_ptr<xwayland::XWaylandManager> xwayland_;

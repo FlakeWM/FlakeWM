@@ -43,6 +43,7 @@
 #include <utility>
 #include <vector>
 
+#include "src/dbus/wlcom/wlcom_dbus_manager.h"
 #include "src/render/backdrop_blur_renderer.h"
 #include "src/utils/args_handler/args_handler.h"
 #include "src/utils/misc/misc.h"
@@ -518,10 +519,11 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
   if (!RegisterDefaultKeyBindings()) {
     return Fail("Failed to register default key bindings");
   }
-  shortcut_settings_service_ = std::make_unique<input::ShortcutSettingsService>(
-      key_binding_manager_.get());
-  if (!shortcut_settings_service_->Start()) {
-    ABSL_LOG(WARNING) << "Shortcut settings D-Bus service is unavailable";
+  dbus_manager_ = std::make_unique<dbus::WlcomDbusManager>(
+      this, key_binding_manager_.get());
+  if (!dbus_manager_->Start()) {
+    ABSL_LOG(WARNING)
+        << "GXDE/Kylin compatibility D-Bus is partially unavailable";
   }
 
   // Connect global object and input event listeners.
@@ -603,6 +605,9 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
   setenv("XDG_CURRENT_DESKTOP", "FlakeWM", 1);
   setenv("XDG_SESSION_DESKTOP", "FlakeWM", 1);
   setenv("XDG_SESSION_TYPE", "wayland", 1);
+  if (dbus_manager_ != nullptr) {
+    dbus_manager_->UpdateActivationEnvironment();
+  }
 
   // Start the user session only when one was requested.
   if (!startup_args.process.empty() && !Spawn(startup_args.process)) {
@@ -741,12 +746,19 @@ void CompositorPrivate::Output::OnFrame(Output* output, void*) {
       output->compositor->protocol_manager_->WantsTearing(focused->Surface());
   bool committed = true;
   output->in_frame = true;
+  wlr_scene_output_state_options scene_options = {};
+  if (output->compositor->dbus_manager_ != nullptr) {
+    scene_options.color_transform =
+        output->compositor->dbus_manager_->OutputColorTransform(output->handle);
+  }
+  const wlr_scene_output_state_options* options =
+      scene_options.color_transform == nullptr ? nullptr : &scene_options;
   if (!tearing) {
-    committed = wlr_scene_output_commit(output->scene_output, nullptr);
+    committed = wlr_scene_output_commit(output->scene_output, options);
   } else if (wlr_scene_output_needs_frame(output->scene_output)) {
     wlr_output_state state = {};
     wlr_output_state_init(&state);
-    if (wlr_scene_output_build_state(output->scene_output, &state, nullptr)) {
+    if (wlr_scene_output_build_state(output->scene_output, &state, options)) {
       const bool has_buffer = (state.committed & WLR_OUTPUT_STATE_BUFFER) != 0;
       state.tearing_page_flip = has_buffer;
       if (state.tearing_page_flip &&
@@ -796,6 +808,9 @@ void CompositorPrivate::Output::OnDestroy(Output* output, void*) {
   // Disconnect before Wlroots releases the output object.
   if (output->compositor->window_selector_ != nullptr) {
     output->compositor->window_selector_->OutputUnavailable(output->handle);
+  }
+  if (output->compositor->dbus_manager_ != nullptr) {
+    output->compositor->dbus_manager_->RemoveOutput(output->handle);
   }
   for (const std::unique_ptr<LayerSurface>& layer_surface :
        output->compositor->layer_surfaces_) {
@@ -1463,6 +1478,9 @@ void CompositorPrivate::SendPointerTouchButton(uint32_t time_msec,
 
 void CompositorPrivate::OnNewInput(CompositorPrivate* compositor,
                                    wlr_input_device* device) {
+  if (compositor->dbus_manager_ != nullptr) {
+    compositor->dbus_manager_->AddInput(device);
+  }
   if (compositor->protocol_manager_ != nullptr) {
     compositor->protocol_manager_->AddInput(device);
   }
@@ -1642,6 +1660,10 @@ void CompositorPrivate::FocusToplevel(Toplevel* toplevel) {
   wlr_scene_node_raise_to_top(&toplevel->scene_tree->node);
   toplevel->Restack();
   toplevel->SetActivated(true);
+  if (dbus_manager_ != nullptr) {
+    dbus_manager_->NotifyToplevelActivated(toplevel->AppId(),
+                                           toplevel->Title());
+  }
   if (wlr_keyboard* keyboard = wlr_seat_get_keyboard(seat_);
       keyboard != nullptr) {
     wlr_seat_keyboard_notify_enter(seat_, surface, keyboard->keycodes,
@@ -2392,6 +2414,9 @@ void CompositorPrivate::OnCursorFrame(CompositorPrivate* compositor, void*) {
 
 void CompositorPrivate::OnTouchDown(CompositorPrivate* compositor,
                                     wlr_touch_down_event* event) {
+  if (compositor->protocol_manager_ != nullptr)
+    compositor->protocol_manager_->TouchGestureDown(
+        event->touch, event->touch_id, event->x, event->y);
   compositor->MoveTouchCursor(event->touch, event->x, event->y);
   if (compositor->window_selector_ != nullptr &&
       compositor->window_selector_->IsActive()) {
@@ -2464,6 +2489,9 @@ void CompositorPrivate::OnTouchDown(CompositorPrivate* compositor,
 
 void CompositorPrivate::OnTouchUp(CompositorPrivate* compositor,
                                   wlr_touch_up_event* event) {
+  if (compositor->protocol_manager_ != nullptr)
+    compositor->protocol_manager_->TouchGestureUp(event->touch,
+                                                   event->touch_id, false);
   TouchPoint* point = compositor->FindTouchPoint(event->touch, event->touch_id);
   if (point == nullptr) {
     return;
@@ -2497,6 +2525,9 @@ void CompositorPrivate::OnTouchUp(CompositorPrivate* compositor,
 
 void CompositorPrivate::OnTouchMotion(CompositorPrivate* compositor,
                                       wlr_touch_motion_event* event) {
+  if (compositor->protocol_manager_ != nullptr)
+    compositor->protocol_manager_->TouchGestureMotion(
+        event->touch, event->touch_id, event->x, event->y);
   TouchPoint* point = compositor->FindTouchPoint(event->touch, event->touch_id);
   if (point == nullptr) {
     return;
@@ -2539,6 +2570,9 @@ void CompositorPrivate::OnTouchMotion(CompositorPrivate* compositor,
 
 void CompositorPrivate::OnTouchCancel(CompositorPrivate* compositor,
                                       wlr_touch_cancel_event* event) {
+  if (compositor->protocol_manager_ != nullptr)
+    compositor->protocol_manager_->TouchGestureUp(event->touch,
+                                                   event->touch_id, true);
   TouchPoint* point = compositor->FindTouchPoint(event->touch, event->touch_id);
   if (point == nullptr) {
     return;
@@ -2605,6 +2639,10 @@ void CompositorPrivate::OnRequestSelection(
     wlr_seat_request_set_selection_event* event) {
   // The seat validates and owns the regular clipboard source.
   wlr_seat_set_selection(compositor->seat_, event->source, event->serial);
+  if (compositor->dbus_manager_ != nullptr) {
+    compositor->dbus_manager_->NotifySelectionChanged(
+        false, compositor->seat_->keyboard_state.focused_surface);
+  }
 }
 
 void CompositorPrivate::OnRequestPrimarySelection(
@@ -2613,6 +2651,10 @@ void CompositorPrivate::OnRequestPrimarySelection(
   // Primary selection is handled separately from the regular clipboard.
   wlr_seat_set_primary_selection(compositor->seat_, event->source,
                                  event->serial);
+  if (compositor->dbus_manager_ != nullptr) {
+    compositor->dbus_manager_->NotifySelectionChanged(
+        true, compositor->seat_->keyboard_state.focused_surface);
+  }
 }
 
 void CompositorPrivate::OnNewOutput(CompositorPrivate* compositor,
@@ -2671,6 +2713,9 @@ void CompositorPrivate::OnNewOutput(CompositorPrivate* compositor,
   compositor->ArrangeLayers(output_wrapper);
   if (compositor->protocol_manager_ != nullptr) {
     compositor->protocol_manager_->AddOutput(output);
+  }
+  if (compositor->dbus_manager_ != nullptr) {
+    compositor->dbus_manager_->AddOutput(output);
   }
 }
 
@@ -2944,7 +2989,7 @@ void CompositorPrivate::Destroy() {
   touch_points_.clear();
   touch_devices_.clear();
   keyboards_.clear();
-  shortcut_settings_service_.reset();
+  dbus_manager_.reset();
   key_binding_manager_.reset();
   outputs_.clear();
 

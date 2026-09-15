@@ -184,8 +184,14 @@ set(flakewm_CXX_SOURCES
   src/backend/fbdev/fbdev_output/fbdev_output.cc
   src/core/compositor/compositor.cc
   src/core/compositor_private/compositor_private.cc
+  src/dbus/wlcom/wlcom_dbus_desktop.cc
+  src/dbus/wlcom/wlcom_dbus_input.cc
+  src/dbus/wlcom/wlcom_dbus_kglobalaccel.cc
+  src/dbus/wlcom/wlcom_dbus_manager.cc
+  src/dbus/wlcom/wlcom_dbus_output.cc
+  src/dbus/wlcom/wlcom_dbus_screenshot.cc
+  src/dbus/wlcom/wlcom_dbus_view.cc
   src/input/key_binding_manager.cc
-  src/input/shortcut_settings_service.cc
   src/input/touchpad_manager.cc
   src/render/backdrop_blur_renderer.cc
   src/render/vulkan_blur_pipeline.cc
@@ -256,8 +262,9 @@ add_executable(flakewm
   src/backend/fbdev/fbdev_output/fbdev_output.h
   src/core/compositor/compositor.h
   src/core/compositor_private/compositor_private.h
+  src/dbus/wlcom/wlcom_dbus_manager.h
+  src/dbus/wlcom/wlcom_dbus_manager_p.h
   src/input/key_binding_manager.h
-  src/input/shortcut_settings_service.h
   src/input/touchpad_manager.h
   src/render/backdrop_blur_renderer.h
   src/render/vulkan_blur_pipeline.h
