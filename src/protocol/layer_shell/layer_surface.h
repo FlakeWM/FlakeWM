@@ -26,6 +26,10 @@
 #include "src/wlr_wrapper/wlroots.h"
 
 namespace flakewm {
+namespace protocol {
+class TreelandProtocolManagerImpl;
+}  // namespace protocol
+
 namespace core {
 
 class CompositorPrivate;
@@ -40,6 +44,7 @@ class LayerSurface final {
 
  private:
   friend class CompositorPrivate;
+  friend class protocol::TreelandProtocolManagerImpl;
 
   static void OnMap(LayerSurface* layer_surface, void*);
   static void OnUnmap(LayerSurface* layer_surface, void*);

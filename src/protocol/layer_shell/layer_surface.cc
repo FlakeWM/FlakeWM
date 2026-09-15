@@ -181,8 +181,17 @@ void CompositorPrivate::OnNewLayerSurface(CompositorPrivate* compositor,
   }
 
   auto layer_surface = std::make_unique<LayerSurface>(compositor, handle);
-  layer_surface->scene_surface = wlr_scene_layer_surface_v1_create(
-      output->LayerTree(handle->pending.layer), handle);
+  wlr_scene_tree* parent = output->LayerTree(handle->pending.layer);
+  if (parent == nullptr) {
+    // An output can remain discoverable briefly while its scene trees are
+    // already being dismantled. Reject late layer-shell requests instead of
+    // passing a null parent into wlroots (which asserts).
+    ABSL_LOG(ERROR) << "Output is shutting down; rejecting layer surface";
+    wlr_layer_surface_v1_destroy(handle);
+    return;
+  }
+  layer_surface->scene_surface =
+      wlr_scene_layer_surface_v1_create(parent, handle);
   if (layer_surface->scene_surface == nullptr) {
     ABSL_LOG(ERROR) << "Failed to create scene tree for layer surface";
     wlr_layer_surface_v1_destroy(handle);

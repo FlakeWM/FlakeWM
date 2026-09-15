@@ -39,6 +39,7 @@
 #include "src/view/ssd/ssd/ssd.h"
 #include "src/view/ssd/ssd_surface_clip/ssd_surface_clip.h"
 #include "src/view/touch_feedback.h"
+#include "src/view/window_selecter/window_selector.h"
 #include "src/wlr_wrapper/wlroots.h"
 
 namespace flakewm {
@@ -50,6 +51,7 @@ namespace protocol {
 class GxdeProtocolManager;
 class KdeOutputManager;
 class KdeProtocolManager;
+class TreelandProtocolManagerImpl;
 class UkuiProtocolManager;
 }  // namespace protocol
 
@@ -68,6 +70,7 @@ class CompositorPrivate final {
   friend class protocol::KdeOutputManager;
   friend class protocol::KdeProtocolManager;
   friend class protocol::ProtocolManager;
+  friend class protocol::TreelandProtocolManagerImpl;
   friend class protocol::UkuiProtocolManager;
   friend class xwayland::XSurface;
   friend class xwayland::XWaylandManager;
@@ -141,7 +144,12 @@ class CompositorPrivate final {
     utils::SignalListener<TouchDevice, void> destroy;
   };
 
-  enum class TouchPointMode : uint8_t { kNative, kPointer, kIgnored };
+  enum class TouchPointMode : uint8_t {
+    kNative,
+    kPointer,
+    kSelector,
+    kIgnored
+  };
 
   struct TouchPoint {
     wlr_touch* touch;
@@ -369,6 +377,7 @@ class CompositorPrivate final {
   std::unique_ptr<input::KeyBindingManager> key_binding_manager_;
   std::unique_ptr<input::ShortcutSettingsService> shortcut_settings_service_;
   std::unique_ptr<view::TouchFeedback> touch_feedback_;
+  std::unique_ptr<view::WindowSelector> window_selector_;
   std::unique_ptr<xwayland::XWaylandManager> xwayland_;
   wlr_seat* seat_ = nullptr;
   wlr_cursor* cursor_ = nullptr;

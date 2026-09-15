@@ -431,6 +431,81 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
   }
   wlr_cursor_set_xcursor(cursor_, cursor_manager_, "default");
 
+  window_selector_ = std::make_unique<view::WindowSelector>(
+      shell_layer_trees_[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY], seat_, cursor_,
+      cursor_manager_,
+      [this](view::WindowSelector::Mode mode, double layout_x, double layout_y,
+             wlr_surface* mask) -> std::optional<view::WindowSelector::Target> {
+        wlr_output* output =
+            wlr_output_layout_output_at(output_layout_, layout_x, layout_y);
+        if (output == nullptr) return std::nullopt;
+        wlr_box output_box = {};
+        wlr_output_layout_get_box(output_layout_, output, &output_box);
+        const auto output_target = [&]() {
+          return view::WindowSelector::Target{
+              .output = output, .surface = nullptr, .box = output_box};
+        };
+        if (mode == view::WindowSelector::Mode::kOutput) {
+          return output_target();
+        }
+
+        const wlr_surface* mask_root =
+            mask == nullptr ? nullptr : wlr_surface_get_root_surface(mask);
+        const auto find_window = [&](wlr_scene_tree* parent)
+            -> std::optional<view::WindowSelector::Target> {
+          wlr_scene_node* node = nullptr;
+          wl_list_for_each_reverse(node, &parent->children, link) {
+            const auto candidate_iterator = std::find_if(
+                toplevels_.begin(), toplevels_.end(),
+                [node](const std::unique_ptr<Toplevel>& candidate) {
+                  return candidate.get() == node->data;
+                });
+            if (candidate_iterator == toplevels_.end()) continue;
+            Toplevel* candidate = candidate_iterator->get();
+            if (!candidate->mapped || !candidate->IsAlive() ||
+                candidate->scene_tree == nullptr ||
+                candidate->Surface() == nullptr ||
+                wlr_surface_get_root_surface(candidate->Surface()) ==
+                    mask_root) {
+              continue;
+            }
+            int tree_x = 0;
+            int tree_y = 0;
+            if (!wlr_scene_node_coords(&candidate->scene_tree->node, &tree_x,
+                                       &tree_y)) {
+              continue;
+            }
+            wlr_box box = candidate->FrameGeometry();
+            box.x += tree_x;
+            box.y += tree_y;
+            if (!wlr_box_contains_point(&box, layout_x, layout_y)) continue;
+            wlr_box clipped = {};
+            if (!wlr_box_intersection(&clipped, &box, &output_box)) continue;
+            return view::WindowSelector::Target{
+                .output = output,
+                .surface = candidate->Surface(),
+                .box = clipped,
+            };
+          }
+          return std::nullopt;
+        };
+        if (const auto overlay_window = find_window(
+                shell_layer_trees_[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY]);
+            overlay_window.has_value()) {
+          return overlay_window;
+        }
+        if (const auto window = find_window(toplevel_tree_);
+            window.has_value()) {
+          return window;
+        }
+        // Region selection follows Treeland: a click over empty space selects
+        // the containing output, while a click over a window uses its bounds.
+        return mode == view::WindowSelector::Mode::kRegion
+                   ? std::optional<view::WindowSelector::Target>(
+                         output_target())
+                   : std::nullopt;
+      });
+
   // Publish those extended protocols ONLY after seat & cursor O.K.
   protocol_manager_ = std::make_unique<protocol::ProtocolManager>(this);
   if (!protocol_manager_->Create(
@@ -719,6 +794,9 @@ void CompositorPrivate::Output::OnRequestState(
 
 void CompositorPrivate::Output::OnDestroy(Output* output, void*) {
   // Disconnect before Wlroots releases the output object.
+  if (output->compositor->window_selector_ != nullptr) {
+    output->compositor->window_selector_->OutputUnavailable(output->handle);
+  }
   for (const std::unique_ptr<LayerSurface>& layer_surface :
        output->compositor->layer_surfaces_) {
     if (layer_surface->handle != nullptr &&
@@ -777,6 +855,11 @@ void CompositorPrivate::Keyboard::OnKey(Keyboard* keyboard,
   }
   if (keyboard->compositor->protocol_manager_ != nullptr) {
     keyboard->compositor->protocol_manager_->NotifyKeyboard(event->time_msec);
+  }
+  if (keyboard->compositor->window_selector_ != nullptr &&
+      keyboard->compositor->window_selector_->HandleKey(keyboard->handle,
+                                                        *event)) {
+    return;
   }
   const bool shortcuts_inhibited =
       keyboard->compositor->protocol_manager_ != nullptr &&
@@ -1045,6 +1128,10 @@ void CompositorPrivate::Toplevel::OnUnmap(Toplevel* toplevel, void*) {
       toplevel->Surface() != nullptr &&
       toplevel->compositor->seat_->keyboard_state.focused_surface ==
           toplevel->Surface();
+  if (toplevel->compositor->window_selector_ != nullptr) {
+    toplevel->compositor->window_selector_->SurfaceUnavailable(
+        toplevel->Surface());
+  }
   toplevel->mapped = false;
   if (toplevel->compositor->protocol_manager_ != nullptr) {
     toplevel->compositor->protocol_manager_->UnmapToplevel(toplevel->Surface());
@@ -1192,6 +1279,10 @@ void CompositorPrivate::Toplevel::OnSetParent(Toplevel* toplevel, void*) {
 
 void CompositorPrivate::Toplevel::OnDestroy(Toplevel* toplevel, void*) {
   // End its active grab before disconnecting protocol listeners.
+  if (toplevel->compositor->window_selector_ != nullptr) {
+    toplevel->compositor->window_selector_->SurfaceUnavailable(
+        toplevel->Surface());
+  }
   if (toplevel->compositor->grabbed_toplevel_ == toplevel) {
     toplevel->compositor->ResetCursorMode();
   }
@@ -2032,6 +2123,10 @@ void CompositorPrivate::ProcessInteractiveMotion() {
 }
 
 void CompositorPrivate::ProcessCursorMotion(uint32_t time_msec) {
+  if (window_selector_ != nullptr && window_selector_->HandleMotion()) {
+    wlr_seat_pointer_clear_focus(seat_);
+    return;
+  }
   // Interactive grabs own pointer motion until the button is released.
   if (cursor_mode_ != CursorMode::kPassthrough) {
     ProcessInteractiveMotion();
@@ -2133,6 +2228,13 @@ void CompositorPrivate::OnCursorButton(CompositorPrivate* compositor,
       compositor->protocol_manager_->SessionLocked()) {
     wlr_seat_pointer_notify_button(compositor->seat_, event->time_msec,
                                    event->button, event->state);
+    return;
+  }
+  if (compositor->window_selector_ != nullptr &&
+      compositor->window_selector_->HandleButton(event->button, event->state)) {
+    if (!compositor->window_selector_->IsActive()) {
+      compositor->ProcessCursorMotion(event->time_msec);
+    }
     return;
   }
   // WLR mouse release event.
@@ -2291,6 +2393,20 @@ void CompositorPrivate::OnCursorFrame(CompositorPrivate* compositor, void*) {
 void CompositorPrivate::OnTouchDown(CompositorPrivate* compositor,
                                     wlr_touch_down_event* event) {
   compositor->MoveTouchCursor(event->touch, event->x, event->y);
+  if (compositor->window_selector_ != nullptr &&
+      compositor->window_selector_->IsActive()) {
+    compositor->window_selector_->HandleMotion();
+    compositor->window_selector_->HandleButton(BTN_LEFT,
+                                               WL_POINTER_BUTTON_STATE_PRESSED);
+    compositor->touch_points_.push_back({
+        .touch = event->touch,
+        .touch_id = event->touch_id,
+        .mode = TouchPointMode::kSelector,
+        .last_x = compositor->cursor_->x,
+        .last_y = compositor->cursor_->y,
+    });
+    return;
+  }
   compositor->cursor_hidden_by_touch_ = true;
   wlr_cursor_unset_image(compositor->cursor_);
 
@@ -2365,6 +2481,10 @@ void CompositorPrivate::OnTouchUp(CompositorPrivate* compositor,
   } else if (point->mode == TouchPointMode::kPointer) {
     compositor->SendPointerTouchButton(event->time_msec,
                                        WL_POINTER_BUTTON_STATE_RELEASED);
+  } else if (point->mode == TouchPointMode::kSelector &&
+             compositor->window_selector_ != nullptr) {
+    compositor->window_selector_->HandleButton(
+        BTN_LEFT, WL_POINTER_BUTTON_STATE_RELEASED);
   }
   std::erase_if(compositor->touch_points_, [&](const TouchPoint& candidate) {
     return candidate.touch == event->touch &&
@@ -2406,6 +2526,9 @@ void CompositorPrivate::OnTouchMotion(CompositorPrivate* compositor,
     compositor->ProcessCursorMotion(event->time_msec);
     wlr_cursor_unset_image(compositor->cursor_);
     compositor->touch_pointer_frame_pending_ = true;
+  } else if (point->mode == TouchPointMode::kSelector &&
+             compositor->window_selector_ != nullptr) {
+    compositor->window_selector_->HandleMotion();
   }
   if (compositor->touch_feedback_ != nullptr) {
     compositor->touch_feedback_->Motion(
@@ -2429,6 +2552,9 @@ void CompositorPrivate::OnTouchCancel(CompositorPrivate* compositor,
   } else if (point->mode == TouchPointMode::kPointer) {
     compositor->SendPointerTouchButton(event->time_msec,
                                        WL_POINTER_BUTTON_STATE_RELEASED);
+  } else if (point->mode == TouchPointMode::kSelector &&
+             compositor->window_selector_ != nullptr) {
+    compositor->window_selector_->Cancel();
   }
   std::erase_if(compositor->touch_points_, [&](const TouchPoint& candidate) {
     const bool remove =
@@ -2830,6 +2956,7 @@ void CompositorPrivate::Destroy() {
     wl_display_destroy_clients(display_);
   }
   protocol_manager_.reset();
+  window_selector_.reset();
   input_method_relay_.reset();
   touch_feedback_.reset();
 

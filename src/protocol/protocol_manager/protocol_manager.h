@@ -35,6 +35,7 @@
 #include "src/protocol/input_timestamps/input_timestamps_manager.h"
 #include "src/protocol/kde/kde_protocol_manager.h"
 #include "src/protocol/toplevel_drag/toplevel_drag_manager.h"
+#include "src/protocol/treeland/treeland_protocol_manager.h"
 #include "src/protocol/ukui/ukui_protocol_manager.h"
 #include "src/utils/signal_listener.h"
 #include "src/wlr_wrapper/wlr_layer_shell.h"
@@ -198,6 +199,7 @@ class ProtocolManager final {
   std::unique_ptr<InputTimestampsManager> input_timestamps_;
   std::unique_ptr<GxdeProtocolManager> gxde_protocols_;
   std::unique_ptr<KdeProtocolManager> kde_protocols_;
+  std::unique_ptr<TreelandProtocolManager> treeland_protocols_;
   std::unique_ptr<UkuiProtocolManager> ukui_protocols_;
   std::unique_ptr<ToplevelDragManager> toplevel_drag_manager_;
   std::unique_ptr<input::TouchpadManager> touchpad_manager_;

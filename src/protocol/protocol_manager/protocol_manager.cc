@@ -326,6 +326,10 @@ bool ProtocolManager::Create(wl_display* display, wlr_backend* backend,
   kde_protocols_ = std::make_unique<KdeProtocolManager>(compositor_);
   const bool kde_valid =
       kde_protocols_->Create(display, backend, seat, output_layout);
+  treeland_protocols_ =
+      std::make_unique<TreelandProtocolManager>(compositor_, this);
+  const bool treeland_valid =
+      treeland_protocols_->Create(display, seat, output_layout);
   ukui_protocols_ = std::make_unique<UkuiProtocolManager>(compositor_);
   const bool ukui_valid = ukui_protocols_->Create(display, seat, output_layout);
   if (idle_notifier_ == nullptr || idle_inhibit_manager_ == nullptr ||
@@ -337,7 +341,7 @@ bool ProtocolManager::Create(wl_display* display, wlr_backend* backend,
       output_power_manager_ == nullptr || session_lock_manager_ == nullptr ||
       session_lock_parent_ == nullptr || !input_timestamps_->IsValid() ||
       !toplevel_drag_manager_->IsValid() || !gxde_valid || !kde_valid ||
-      !ukui_valid) {
+      !treeland_valid || !ukui_valid) {
     return false;
   }
 

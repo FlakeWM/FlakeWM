@@ -191,7 +191,8 @@ Control 等敏感 global 均被隐藏；通过合成器常规 socket 连接的�
 
 | 协议名称                           | 支持情况 | 说明                                                                                                                    |
 | :--------------------------------- | :------: | :---------------------------------------------------------------------------------------------------------------------- |
-| treeland_dde_shell_manager_v1      |    no    | 1                                                                                                                       |
-| treeland_app_id_resolver_v1        |    no    | 1                                                                                                                       |
-| treeland_capture_manager_v1        |    no    | 1；供 deepin-screen-recorder 录屏与点击窗口截图使用                                                                     |
-| treeland_personalization_manager_v1 |    no    | 1；实现时需兼容 Treeland Protocol 0.5.8 和 0.5.9 中签名不同的同名 v1 XML                                              |
+| dde_shell                           |    2     | 旧版 DTK 窗口状态与属性协议 |
+| treeland_dde_shell_manager_v1      |    2     | Shell 定位及 GXDE 辅助上下文 |
+| treeland_app_id_resolver_manager_v1 |   1     | 特权应用 ID 解析器注册 |
+| treeland_capture_manager_v1        |    1     | 输出选择及交互式窗口、区域选择，支持单帧 SHM 拷贝与持续 DMA-BUF 捕获 |
+| treeland_personalization_manager_v1 |   2     | 自动选择不兼容的 0.5.8/0.5.9 线布局；可用 `GXDE_WLCOM_PERSONALIZATION` 强制指定 |

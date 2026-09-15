@@ -191,7 +191,8 @@ regular socket retain the complete registry.
 
 | Name                           | Version Supported | Note                                                                                                                    |
 | :--------------------------------- | :------: | :---------------------------------------------------------------------------------------------------------------------- |
-| treeland_dde_shell_manager_v1      |    no    | 1                                                                                                                       |
-| treeland_app_id_resolver_v1        |    no    | 1                                                                                                                       |
-| treeland_capture_manager_v1        |    no    | 1; For deepin-screen-recorder ONLY.                                                                     |
-| treeland_personalization_manager_v1 |    no    | 1; Watch out for signature mismatch (while version NOT bumped) for protocol 0.5.8 & 0.5.9 in XML.                                              |
+| dde_shell                           |    2     | Legacy DTK window state/property protocol |
+| treeland_dde_shell_manager_v1      |    2     | Shell placement and GXDE helper contexts |
+| treeland_app_id_resolver_manager_v1 |   1     | Privileged application-ID resolver registration |
+| treeland_capture_manager_v1        |    1     | Output selection, interactive window/region selection, single-frame SHM copy, and continuous DMA-BUF capture |
+| treeland_personalization_manager_v1 |   2     | Automatically selects the incompatible 0.5.8/0.5.9 wire layout; override with `GXDE_WLCOM_PERSONALIZATION` |

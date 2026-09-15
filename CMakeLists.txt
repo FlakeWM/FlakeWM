@@ -131,6 +131,26 @@ foreach(protocol IN ITEMS
   list(APPEND FLAKEWM_GXDE_PROTOCOLS ${FLAKEWM_${protocol_variable}_PROTOCOL})
 endforeach()
 
+# Treeland and legacy DDE compatibility protocols used by GXDE/DTK.
+foreach(protocol IN ITEMS
+    dde-shell
+    treeland-app-id-resolver-v1
+    treeland-capture-unstable-v1
+    treeland-dde-shell-v1
+    treeland-personalization-manager-v1
+  )
+  string(REPLACE "-" "_" protocol_variable "${protocol}")
+  string(TOUPPER "${protocol_variable}" protocol_variable)
+  flakewm_generate_server_protocol(
+    "FLAKEWM_${protocol_variable}_PROTOCOL"
+    "${CMAKE_CURRENT_SOURCE_DIR}/protocols/${protocol}.xml"
+    "${protocol}"
+  )
+  list(APPEND FLAKEWM_TREELAND_PROTOCOLS
+    ${FLAKEWM_${protocol_variable}_PROTOCOL}
+  )
+endforeach()
+
 # UKUI compatibility protocols, kept in-tree at the revisions implemented by
 # the server-side compatibility manager.
 foreach(protocol IN ITEMS
@@ -170,6 +190,7 @@ set(flakewm_CXX_SOURCES
   src/render/backdrop_blur_renderer.cc
   src/render/vulkan_blur_pipeline.cc
   src/view/touch_feedback.cc
+  src/view/window_selecter/window_selector.cc
   src/protocol/foreign_toplevel/foreign_toplevel.cc
   src/protocol/gxde/gxde_identifier.cc
   src/protocol/gxde/gxde_protocol_manager.cc
@@ -190,6 +211,12 @@ set(flakewm_CXX_SOURCES
   src/protocol/text_input/text_input_v3.cc
   src/protocol/toplevel_drag/toplevel_drag.cc
   src/protocol/toplevel_drag/toplevel_drag_manager.cc
+  src/protocol/treeland/dde_shell.cc
+  src/protocol/treeland/treeland_app_id_resolver.cc
+  src/protocol/treeland/treeland_capture.cc
+  src/protocol/treeland/treeland_dde_shell.cc
+  src/protocol/treeland/treeland_personalization.cc
+  src/protocol/treeland/treeland_protocol_manager.cc
   src/protocol/ukui/ukui_blur.cc
   src/protocol/ukui/ukui_output.cc
   src/protocol/ukui/ukui_protocol_manager.cc
@@ -216,6 +243,7 @@ add_executable(flakewm
   ${FLAKEWM_XDG_TOPLEVEL_DRAG_V1_PROTOCOL}
   ${FLAKEWM_GXDE_PROTOCOLS}
   ${FLAKEWM_KDE_PROTOCOLS}
+  ${FLAKEWM_TREELAND_PROTOCOLS}
   ${FLAKEWM_UKUI_PROTOCOLS}
   src/wlr_wrapper/wlroots.h
   src/wlr_wrapper/color.h
@@ -234,6 +262,7 @@ add_executable(flakewm
   src/render/backdrop_blur_renderer.h
   src/render/vulkan_blur_pipeline.h
   src/view/touch_feedback.h
+  src/view/window_selecter/window_selector.h
   src/protocol/foreign_toplevel/foreign_toplevel.h
   src/protocol/gxde/gxde_protocol_manager.h
   src/protocol/gxde/gxde_protocol_manager_internal.h
@@ -253,6 +282,8 @@ add_executable(flakewm
   src/protocol/text_input/text_input_v3.h
   src/protocol/toplevel_drag/toplevel_drag.h
   src/protocol/toplevel_drag/toplevel_drag_manager.h
+  src/protocol/treeland/treeland_protocol_manager.h
+  src/protocol/treeland/treeland_protocol_manager_internal.h
   src/protocol/ukui/ukui_protocol_manager.h
   src/protocol/ukui/ukui_protocol_manager_internal.h
   src/view/ssd/ssd/ssd.h
@@ -292,6 +323,16 @@ qt_add_resources(flakewm "touch_feedback_qml"
   PREFIX "/flakewm"
   BASE src/view
   FILES src/view/touch_feedback.qml
+)
+
+qt_add_resources(flakewm "window_selector_qml"
+  PREFIX "/flakewm"
+  BASE src/view/window_selecter
+  FILES
+    src/view/window_selecter/window_selector_toolbar.qml
+    src/view/window_selecter/icons/select_output.svg
+    src/view/window_selecter/icons/select_region.svg
+    src/view/window_selecter/icons/select_window.svg
 )
 
 add_dependencies(flakewm flakewm-xwayland)
