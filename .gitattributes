@@ -1,0 +1,5 @@
+# Third party libraries are vendored in libs
+libs/** linguist-vendored
+
+# Documentations could be found in docs
+doc/** linguist-documentation
