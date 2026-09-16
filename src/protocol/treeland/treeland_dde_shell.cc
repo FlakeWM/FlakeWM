@@ -197,10 +197,19 @@ class DdeShellGlobal final : public TreelandGlobal {
                                uint32_t y_offset) {
     auto* state =
         static_cast<SurfaceState*>(wl_resource_get_user_data(resource));
-    state->auto_placement = true;
-    state->has_position = false;
-    state->y_offset =
-        y_offset > INT32_MAX ? INT32_MAX : static_cast<int32_t>(y_offset);
+    // Auto-placement should be one shot one, freezing after placement is done.
+    state->y_offset = static_cast<int32_t>(y_offset);
+    if (wlr_cursor* cursor = state->shell->owner_->Cursor();
+        cursor != nullptr) {
+      state->x = static_cast<int32_t>(cursor->x);
+      state->y = static_cast<int32_t>(cursor->y) + state->y_offset;
+      state->has_position = true;
+      state->auto_placement = false;
+    } else {
+      // Only if cursor is not avaliable yet.
+      state->auto_placement = true;
+      state->has_position = false;
+    }
     state->Apply();
   }
 
