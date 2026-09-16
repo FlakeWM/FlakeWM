@@ -252,6 +252,7 @@ class CompositorPrivate final {
     wlr_box maximized_box = {};
     wlr_box tiled_box = {};
     wlr_output* maximized_output = nullptr;
+    int corner_radius = 8;
     std::unique_ptr<view::Ssd> ssd;
     std::unique_ptr<view::SsdSurfaceClip> ssd_clip;
     bool ssd_initial_position_pending = false;
@@ -304,7 +305,10 @@ class CompositorPrivate final {
                        double* surface_x, double* surface_y) const;
   Toplevel* FindToplevel(wlr_xdg_toplevel* handle) const;
   Toplevel* ToplevelForSurface(wlr_surface* surface) const;
+  bool HasXdgDecoration(wlr_surface* surface) const;
   void SetSsdEnabled(Toplevel* toplevel, bool enabled);
+  void SetRoundCorner(Toplevel* toplevel, int radius);
+  void RebuildSurfaceClip(Toplevel* toplevel);
   void AttachSsd(Toplevel* toplevel);
   view::Ssd::HitTarget SsdHitAt(const Toplevel* toplevel) const;
   void FocusToplevel(Toplevel* toplevel);

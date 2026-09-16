@@ -218,7 +218,7 @@ class KdeProtocolManager::Impl final {
     for (wl_resource* resource : window_management_resources) {
       AnnounceWindow(resource, added);
     }
-    ApplyServerDecoration(surface);
+    ApplyServerDecoration(surface, false);
     if (Blur* blur = FindBlur(surface); blur != nullptr) {
       ApplyBlur(blur);
     }
@@ -385,12 +385,13 @@ class KdeProtocolManager::Impl final {
     decoration->destroy.notify = OnServerDecorationDestroy;
     wl_signal_add(&handle->events.destroy, &decoration->destroy);
     manager->server_decorations.push_back(decoration);
-    manager->ApplyServerDecoration(handle->surface);
+    manager->ApplyServerDecoration(handle->surface, false);
   }
 
   static void OnServerDecorationMode(wl_listener* listener, void*) {
     ServerDecoration* decoration = wl_container_of(listener, decoration, mode);
-    decoration->manager->ApplyServerDecoration(decoration->handle->surface);
+    decoration->manager->ApplyServerDecoration(decoration->handle->surface,
+                                                true);
   }
 
   static void OnServerDecorationDestroy(wl_listener* listener, void*) {
@@ -403,7 +404,16 @@ class KdeProtocolManager::Impl final {
     delete decoration;
   }
 
-  void ApplyServerDecoration(wlr_surface* surface) const {
+  void ApplyServerDecoration(wlr_surface* surface,
+                             bool explicit_mode_request) const {
+    // GXWM treats xdg-decoration and the legacy KDE decoration protocol as
+    // one decoration state.  In particular, a newly-created legacy object is
+    // not allowed to replace an already established xdg-decoration choice
+    // with the manager's default SERVER mode.  GTK applications can bind both
+    // protocols, and doing so would otherwise add an SSD around their CSD.
+    if (!explicit_mode_request && compositor->HasXdgDecoration(surface)) {
+      return;
+    }
     core::CompositorPrivate::Toplevel* toplevel =
         compositor->ToplevelForSurface(surface);
     if (toplevel == nullptr) {

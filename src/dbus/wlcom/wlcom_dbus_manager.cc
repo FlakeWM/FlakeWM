@@ -178,25 +178,44 @@ bool WlcomDbusManager::ApplyOutputColor(wlr_output* output, int brightness,
   brightness = std::clamp(brightness, 0, 100);
   color_temperature = std::clamp(color_temperature, 1000, 25100);
 
+  // The neutral wlcom values must leave the client pixels untouched.  Even an
+  // identity matrix would opt the output into wlroots' color-transform path,
+  // which can introduce an unnecessary conversion/quantization round trip.
+  if (brightness == 100 && color_temperature == 6500) {
+    if (wlr_color_transform* old = output_color_transforms_.take(output);
+        old != nullptr) {
+      wlr_color_transform_unref(old);
+    }
+    wlr_output_schedule_frame(output);
+    return true;
+  }
+
   const double temperature = color_temperature / 100.0;
   auto channel = [](double value) {
     return static_cast<float>(std::clamp(value, 0.0, 255.0) / 255.0);
   };
-  const float red =
-      channel(temperature <= 66.0 ? 255.0
-                                  : 329.698727446 * std::pow(temperature - 60.0,
-                                                             -0.1332047592));
-  const float green = channel(
-      temperature <= 66.0
-          ? 99.4708025861 * std::log(temperature) - 161.1195681661
-          : 288.1221695283 * std::pow(temperature - 60.0, -0.0755148492));
-  const float blue =
-      channel(temperature >= 66.0
-                  ? 255.0
-                  : (temperature <= 19.0
-                         ? 0.0
-                         : 138.5177312231 * std::log(temperature - 10.0) -
-                               305.0447927307));
+  auto temperature_channels = [channel](double value) {
+    return std::array<float, 3>{
+        channel(value <= 66.0
+                    ? 255.0
+                    : 329.698727446 * std::pow(value - 60.0, -0.1332047592)),
+        channel(value <= 66.0
+                    ? 99.4708025861 * std::log(value) - 161.1195681661
+                    : 288.1221695283 *
+                          std::pow(value - 60.0, -0.0755148492)),
+        channel(value >= 66.0
+                    ? 255.0
+                    : (value <= 19.0
+                           ? 0.0
+                           : 138.5177312231 * std::log(value - 10.0) -
+                                 305.0447927307)),
+    };
+  };
+  const std::array<float, 3> neutral = temperature_channels(65.0);
+  const std::array<float, 3> channels = temperature_channels(temperature);
+  const float red = std::clamp(channels[0] / neutral[0], 0.0F, 1.0F);
+  const float green = std::clamp(channels[1] / neutral[1], 0.0F, 1.0F);
+  const float blue = std::clamp(channels[2] / neutral[2], 0.0F, 1.0F);
   const float level = brightness / 100.0F;
   const float matrix[9] = {red * level, 0.0F, 0.0F, 0.0F,        green * level,
                            0.0F,        0.0F, 0.0F, blue * level};

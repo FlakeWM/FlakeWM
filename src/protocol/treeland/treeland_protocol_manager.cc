@@ -202,6 +202,14 @@ void TreelandProtocolManagerImpl::SetTitlebar(wlr_surface* surface,
   compositor->SetSsdEnabled(toplevel, enabled);
 }
 
+void TreelandProtocolManagerImpl::SetRoundCorner(wlr_surface* surface,
+                                                 int radius) const {
+  if (compositor == nullptr) return;
+  auto* toplevel = compositor->ToplevelForSurface(surface);
+  if (toplevel == nullptr) return;
+  compositor->SetRoundCorner(toplevel, radius);
+}
+
 void TreelandProtocolManagerImpl::SetBlur(wlr_surface* surface,
                                           bool enabled) const {
   if (surface == nullptr || compositor == nullptr ||
@@ -211,7 +219,7 @@ void TreelandProtocolManagerImpl::SetBlur(wlr_surface* surface,
   if (enabled) {
     pixman_region32_t full;
     pixman_region32_init(&full);
-    compositor->backdrop_blur_renderer_->SetSurfaceBlur(surface, &full, 5.0F);
+    compositor->backdrop_blur_renderer_->SetSurfaceBlur(surface, &full, 2.6F);
     pixman_region32_fini(&full);
   } else {
     compositor->backdrop_blur_renderer_->ClearSurfaceBlur(surface);

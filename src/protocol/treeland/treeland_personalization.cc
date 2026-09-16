@@ -153,6 +153,10 @@ class PersonalizationGlobal final : public TreelandGlobal {
             titlebar ==
                 TREELAND_PERSONALIZATION_WINDOW_CONTEXT_V1_ENABLE_MODE_ENABLE);
       }
+      if (radius >= 0) {
+        global->owner_->SetRoundCorner(
+            surface, radius > 0 ? radius : global->owner_->round_corner_radius);
+      }
     }
   };
 
@@ -295,6 +299,7 @@ class PersonalizationGlobal final : public TreelandGlobal {
     auto* context =
         static_cast<WindowContext*>(wl_resource_get_user_data(resource));
     context->radius = radius;
+    context->Apply();
   }
 
   static void SetShadow(wl_client*, wl_resource*, int32_t, int32_t, int32_t,

@@ -16,7 +16,7 @@
  * You should have received a copy of the GNU General Public License along with
  * FLAKEWM. If not, see <https://www.gnu.org/licenses/>.
  * ----------------------------------------------------------------------------
- * Bottom-corner clipping for a server-decorated surface.
+ * Anti-aliased corner clipping for an XDG surface.
  */
 
 #ifndef SRC_VIEW_SSD_SSD_SURFACE_CLIP_SSD_SURFACE_CLIP_H_
@@ -34,7 +34,9 @@ namespace view {
 class SsdSurfaceClip final {
  public:
   static std::unique_ptr<SsdSurfaceClip> Create(wlr_scene_tree* xdg_tree,
-                                                wlr_surface* surface);
+                                                wlr_surface* surface,
+                                                int radius,
+                                                bool clip_top);
   ~SsdSurfaceClip();
 
   SsdSurfaceClip(const SsdSurfaceClip&) = delete;
@@ -43,21 +45,20 @@ class SsdSurfaceClip final {
   void Update(const wlr_box& geometry, bool maximized);
 
  private:
-  static constexpr int kRadius = 8;
-
   struct Segment {
     enum class Alignment { kLeft, kCenter, kRight };
 
     wlr_scene_tree* tree = nullptr;
     wlr_scene_buffer* buffer = nullptr;
     Alignment alignment = Alignment::kCenter;
+    bool top = false;
     int row = 0;
     int inset = 0;
     float coverage = 1.0F;
   };
 
   SsdSurfaceClip(wlr_scene_tree* xdg_tree, wlr_scene_tree* surface_tree,
-                 wlr_surface* surface);
+                 wlr_surface* surface, int radius, bool clip_top);
 
   bool Initialize();
   void ClearClip();
@@ -68,6 +69,8 @@ class SsdSurfaceClip final {
   wlr_scene_tree* xdg_tree_ = nullptr;
   wlr_scene_tree* surface_tree_ = nullptr;
   wlr_surface* surface_ = nullptr;
+  int radius_ = 0;
+  bool clip_top_ = false;
   std::vector<Segment> segments_;
   utils::SignalListener<SsdSurfaceClip, void> commit_{this, OnCommit};
   utils::SignalListener<SsdSurfaceClip, void> tree_destroy_{this,

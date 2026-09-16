@@ -1519,9 +1519,6 @@ void CompositorPrivate::Toplevel::OnCommit(Toplevel* toplevel, void*) {
     toplevel->ssd->SetAppId(toplevel->handle->app_id == nullptr
                                 ? std::string{}
                                 : toplevel->handle->app_id);
-    if (toplevel->ssd_clip != nullptr) {
-      toplevel->ssd_clip->Update(geometry, toplevel->maximized);
-    }
     if (toplevel->ssd_initial_position_pending && geometry.width > 0 &&
         geometry.height > 0) {
       const wlr_box frame = toplevel->FrameGeometry();
@@ -1532,6 +1529,11 @@ void CompositorPrivate::Toplevel::OnCommit(Toplevel* toplevel, void*) {
       }
       toplevel->ssd_initial_position_pending = false;
     }
+  }
+  if (toplevel->ssd_clip != nullptr) {
+    const bool fullscreen = toplevel->handle->current.fullscreen;
+    toplevel->ssd_clip->Update(
+        geometry, toplevel->maximized || toplevel->tiled || fullscreen);
   }
 
   // Geometry can change after configure. Keep the requested frame position.
@@ -1949,6 +1951,23 @@ CompositorPrivate::Toplevel* CompositorPrivate::ToplevelForSurface(
   return nullptr;
 }
 
+bool CompositorPrivate::HasXdgDecoration(wlr_surface* surface) const {
+  if (surface == nullptr) {
+    return false;
+  }
+  wlr_surface* root = wlr_surface_get_root_surface(surface);
+  return std::any_of(
+      xdg_decorations_.begin(), xdg_decorations_.end(),
+      [root](const std::unique_ptr<XdgDecoration>& decoration) {
+        return decoration != nullptr && decoration->handle != nullptr &&
+               decoration->handle->toplevel != nullptr &&
+               decoration->handle->toplevel->base != nullptr &&
+               decoration->handle->toplevel->base->surface != nullptr &&
+               wlr_surface_get_root_surface(
+                   decoration->handle->toplevel->base->surface) == root;
+      });
+}
+
 void CompositorPrivate::SetSsdEnabled(Toplevel* toplevel, bool enabled) {
   if (toplevel == nullptr) {
     return;
@@ -1960,6 +1979,38 @@ void CompositorPrivate::SetSsdEnabled(Toplevel* toplevel, bool enabled) {
   toplevel->ssd_clip.reset();
   toplevel->ssd.reset();
   toplevel->ssd_initial_position_pending = false;
+  RebuildSurfaceClip(toplevel);
+}
+
+void CompositorPrivate::SetRoundCorner(Toplevel* toplevel, int radius) {
+  if (toplevel == nullptr) {
+    return;
+  }
+  toplevel->corner_radius = std::clamp(radius, 0, 64);
+  RebuildSurfaceClip(toplevel);
+}
+
+void CompositorPrivate::RebuildSurfaceClip(Toplevel* toplevel) {
+  if (toplevel == nullptr) {
+    return;
+  }
+  toplevel->ssd_clip.reset();
+  if (toplevel->scene_tree == nullptr || toplevel->Surface() == nullptr ||
+      toplevel->corner_radius <= 0) {
+    return;
+  }
+  toplevel->ssd_clip = view::SsdSurfaceClip::Create(
+      toplevel->scene_tree, toplevel->Surface(), toplevel->corner_radius,
+      toplevel->ssd == nullptr);
+  if (toplevel->ssd_clip == nullptr) {
+    ABSL_LOG(ERROR) << "Failed to create window surface clip";
+    return;
+  }
+  const bool fullscreen = toplevel->handle != nullptr &&
+                          toplevel->handle->current.fullscreen;
+  toplevel->ssd_clip->Update(
+      toplevel->Geometry(),
+      toplevel->maximized || toplevel->tiled || fullscreen);
 }
 
 void CompositorPrivate::AttachSsd(Toplevel* toplevel) {
@@ -1968,11 +2019,11 @@ void CompositorPrivate::AttachSsd(Toplevel* toplevel) {
     return;
   }
 
-  auto clip =
-      view::SsdSurfaceClip::Create(toplevel->scene_tree, toplevel->Surface());
+  toplevel->ssd_clip.reset();
   toplevel->ssd = view::Ssd::Create(toplevel->scene_tree);
   if (toplevel->ssd == nullptr) {
     ABSL_LOG(ERROR) << "Failed to create server-side decoration";
+    RebuildSurfaceClip(toplevel);
     return;
   }
   toplevel->ssd->SetMaximized(toplevel->maximized);
@@ -1986,12 +2037,7 @@ void CompositorPrivate::AttachSsd(Toplevel* toplevel) {
   toplevel->ssd->SetAppId(toplevel->handle->app_id == nullptr
                               ? std::string{}
                               : toplevel->handle->app_id);
-  toplevel->ssd_clip = std::move(clip);
-  if (toplevel->ssd_clip == nullptr) {
-    ABSL_LOG(ERROR) << "Failed to create SSD surface clip";
-  } else {
-    toplevel->ssd_clip->Update(toplevel->Geometry(), toplevel->maximized);
-  }
+  RebuildSurfaceClip(toplevel);
   toplevel->ssd_initial_position_pending = true;
 }
 
@@ -2589,7 +2635,8 @@ void CompositorPrivate::SetMaximized(Toplevel* toplevel, bool maximized) {
     toplevel->ssd->SetMaximized(maximized);
   }
   if (toplevel->ssd_clip != nullptr) {
-    toplevel->ssd_clip->Update(toplevel->Geometry(), maximized);
+    toplevel->ssd_clip->Update(toplevel->Geometry(),
+                               maximized || toplevel->tiled);
   }
 
   if (maximized) {
@@ -2713,7 +2760,7 @@ void CompositorPrivate::TileToplevel(
     toplevel->ssd->SetTiled(true);
   }
   if (toplevel->ssd_clip != nullptr) {
-    toplevel->ssd_clip->Update(toplevel->Geometry(), false);
+    toplevel->ssd_clip->Update(toplevel->Geometry(), true);
   }
   if (toplevel->handle != nullptr) {
     wlr_xdg_toplevel_set_tiled(
@@ -3673,6 +3720,7 @@ void CompositorPrivate::OnNewToplevel(CompositorPrivate* compositor,
   }
   toplevel->scene_tree->node.data = toplevel.get();
   handle->base->data = toplevel->scene_tree;
+  compositor->RebuildSurfaceClip(toplevel.get());
 
   // Connect lifecycle and window management requests.
   toplevel->map.Connect(&handle->base->surface->events.map);

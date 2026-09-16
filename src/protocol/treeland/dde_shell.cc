@@ -64,8 +64,13 @@ class LegacyDdeShellGlobal final : public TreelandGlobal {
       if (state->resource != nullptr) wl_resource_destroy(state->resource);
     }
     void Apply() const {
-      if (surface != nullptr && no_titlebar) {
-        shell->owner_->SetTitlebar(surface, false);
+      if (surface == nullptr) return;
+      if (no_titlebar) shell->owner_->SetTitlebar(surface, false);
+      const bool no_radius =
+          (effects & DDE_SHELL_EFFECTSCENE_EFFECTNORADIUS) != 0;
+      if (radius_x >= 0.0F || no_radius) {
+        shell->owner_->SetRoundCorner(
+            surface, no_radius ? 0 : static_cast<int>(radius_x + 0.5F));
       }
     }
   };
@@ -201,6 +206,7 @@ class LegacyDdeShellGlobal final : public TreelandGlobal {
       std::memcpy(values, data->data, sizeof(values));
       state->radius_x = values[0];
       state->radius_y = values[1];
+      state->Apply();
     }
   }
 
@@ -220,6 +226,7 @@ class LegacyDdeShellGlobal final : public TreelandGlobal {
     auto* state =
         static_cast<SurfaceState*>(wl_resource_get_user_data(resource));
     state->effects = effects;
+    state->Apply();
   }
 
   static void RequestWindowStartupEffect(wl_client*, wl_resource* resource,

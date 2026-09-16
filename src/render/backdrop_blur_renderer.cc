@@ -348,9 +348,15 @@ class BackdropBlurRenderer::Impl {
     if (self->failed || self->inner == nullptr) {
       return;
     }
-    self->renderer->ApplySurfaceBlur(self, options);
+    const bool force_blending = self->renderer->ApplySurfaceBlur(self, options);
     if (!self->failed && self->inner != nullptr) {
-      wlr_render_pass_add_texture(self->inner, options);
+      if (force_blending) {
+        wlr_render_texture_options blended = *options;
+        blended.blend_mode = WLR_RENDER_BLEND_MODE_PREMULTIPLIED;
+        wlr_render_pass_add_texture(self->inner, &blended);
+      } else {
+        wlr_render_pass_add_texture(self->inner, options);
+      }
     }
   }
 
@@ -645,22 +651,24 @@ class BackdropBlurRenderer::Impl {
     glUseProgram(0);
   }
 
-  void ApplySurfaceBlur(RenderPass* pass,
+  bool ApplySurfaceBlur(RenderPass* pass,
                         const wlr_render_texture_options* options) {
-    if (pass->target->width <= 0 || pass->target->height <= 0) return;
+    if (pass->target->width <= 0 || pass->target->height <= 0) return false;
     auto found = std::find_if(
-        surfaces.begin(), surfaces.end(), [options, pass](const auto& item) {
-          return !pass->rendered_blurs.contains(item->surface) &&
-                 wlr_surface_get_texture(item->surface) == options->texture;
+        surfaces.begin(), surfaces.end(), [options](const auto& item) {
+          return wlr_surface_get_texture(item->surface) == options->texture;
         });
     if (found != surfaces.end()) {
       SurfaceBlur& blur = **found;
-      pass->rendered_blurs.insert(blur.surface);
-      pixman_region32_t clip = SurfaceRegion(
-          blur, *options, pass->target->width, pass->target->height);
-      ApplyRegionBlur(pass, &clip, blur.offset);
-      pixman_region32_fini(&clip);
-      return;
+      if (pass->rendered_blurs.insert(blur.surface).second) {
+        pixman_region32_t clip = SurfaceRegion(
+            blur, *options, pass->target->width, pass->target->height);
+        ApplyRegionBlur(pass, &clip, blur.offset);
+        pixman_region32_fini(&clip);
+      }
+      // DTK surfaces can advertise their full buffer as opaque despite using
+      // ARGB translucency.  GXWM deliberately blends them for blur contexts.
+      return true;
     }
 
     auto texture = std::find_if(
@@ -669,13 +677,14 @@ class BackdropBlurRenderer::Impl {
           return !pass->rendered_texture_blurs.contains(item->owner) &&
                  item->texture == options->texture;
         });
-    if (texture == textures_blur.end()) return;
+    if (texture == textures_blur.end()) return false;
     TextureBlur& blur = **texture;
     pass->rendered_texture_blurs.insert(blur.owner);
     pixman_region32_t clip = TextureRegion(blur, *options, pass->target->width,
                                            pass->target->height);
     ApplyRegionBlur(pass, &clip, blur.offset);
     pixman_region32_fini(&clip);
+    return false;
   }
 
   void DestroyGlResources() {
