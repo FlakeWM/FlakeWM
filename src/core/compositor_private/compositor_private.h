@@ -209,6 +209,7 @@ class CompositorPrivate final {
     virtual void Configure(const wlr_box& box) const;
     virtual void SetActivated(bool activated) const;
     virtual void SetMaximizedState(bool maximized) const;
+    virtual void SetResizingState(bool resizing) const;
     virtual void SetMinimizedState(bool minimized) const;
     virtual void SetFullscreenState(bool fullscreen) const;
     virtual void Restack() const;
@@ -342,6 +343,7 @@ class CompositorPrivate final {
   bool CursorAtOutputTop() const;
   bool IsTitlebarPoint(const Toplevel* toplevel, wlr_surface* surface,
                        double surface_y) const;
+  view::Ssd::HitTarget CsdResizeHitAt(Toplevel** toplevel) const;
   void ResetCursorMode();
   void EndInteractive();
   void BeginInteractive(Toplevel* toplevel, CursorMode mode, uint32_t edges);

@@ -191,6 +191,8 @@ const char* ResizeCursorName(uint32_t edges) {
   return "bottom_side";
 }
 
+constexpr int kCsdResizeMargin = 8;
+
 }  // namespace
 
 CompositorPrivate::CompositorPrivate() {
@@ -1372,6 +1374,12 @@ void CompositorPrivate::Toplevel::SetActivated(bool activated) const {
 void CompositorPrivate::Toplevel::SetMaximizedState(bool maximized) const {
   if (handle != nullptr) {
     wlr_xdg_toplevel_set_maximized(handle, maximized);
+  }
+}
+
+void CompositorPrivate::Toplevel::SetResizingState(bool resizing) const {
+  if (handle != nullptr) {
+    wlr_xdg_toplevel_set_resizing(handle, resizing);
   }
 }
 
@@ -2861,8 +2869,87 @@ bool CompositorPrivate::IsTitlebarPoint(const Toplevel* toplevel,
   return surface_y >= geometry_y && surface_y < geometry_y + 48;
 }
 
+view::Ssd::HitTarget CompositorPrivate::CsdResizeHitAt(
+    Toplevel** hit_toplevel) const {
+  if (hit_toplevel != nullptr) {
+    *hit_toplevel = nullptr;
+  }
+
+  // For a GTK CSD decor, the round corner may be affecting its resize zone
+  wlr_scene_node* node = nullptr;
+  wl_list_for_each_reverse(node, &toplevel_tree_->children, link) {
+    auto found = std::find_if(toplevels_.begin(), toplevels_.end(),
+                              [node](const auto& candidate) {
+                                return candidate->scene_tree != nullptr &&
+                                       &candidate->scene_tree->node == node;
+                              });
+    if (found == toplevels_.end()) {
+      continue;
+    }
+    Toplevel* candidate = found->get();
+    if (candidate == nullptr || !candidate->IsAlive() ||
+        candidate->IsXWayland() || candidate->ssd != nullptr ||
+        candidate->scene_tree == nullptr || !candidate->mapped ||
+        candidate->minimized || candidate->maximized || candidate->tiled ||
+        candidate->RequestedFullscreen()) {
+      continue;
+    }
+
+    const wlr_box geometry = candidate->Geometry();
+    if (geometry.width <= 0 || geometry.height <= 0) {
+      continue;
+    }
+    const int left = candidate->scene_tree->node.x;
+    const int top = candidate->scene_tree->node.y;
+    const int right = left + geometry.width;
+    const int bottom = top + geometry.height;
+    if (cursor_->x < left - kCsdResizeMargin ||
+        cursor_->x >= right + kCsdResizeMargin ||
+        cursor_->y < top - kCsdResizeMargin ||
+        cursor_->y >= bottom + kCsdResizeMargin) {
+      continue;
+    }
+
+    uint32_t edges = 0;
+    if (cursor_->x < left + kCsdResizeMargin) {
+      edges |= WLR_EDGE_LEFT;
+    } else if (cursor_->x >= right - kCsdResizeMargin) {
+      edges |= WLR_EDGE_RIGHT;
+    }
+    if (cursor_->y < top + kCsdResizeMargin) {
+      edges |= WLR_EDGE_TOP;
+    } else if (cursor_->y >= bottom - kCsdResizeMargin) {
+      edges |= WLR_EDGE_BOTTOM;
+    }
+
+    const wlr_xdg_toplevel_state& state = candidate->handle->current;
+    const bool fixed_width = state.min_width > 0 && state.max_width > 0 &&
+                             state.min_width == state.max_width;
+    const bool fixed_height = state.min_height > 0 && state.max_height > 0 &&
+                              state.min_height == state.max_height;
+    if (fixed_width) {
+      edges &= ~(WLR_EDGE_LEFT | WLR_EDGE_RIGHT);
+    }
+    if (fixed_height) {
+      edges &= ~(WLR_EDGE_TOP | WLR_EDGE_BOTTOM);
+    }
+    if (edges == 0) {
+      continue;
+    }
+
+    if (hit_toplevel != nullptr) {
+      *hit_toplevel = candidate;
+    }
+    return {.part = view::Ssd::Part::kResize, .edges = edges};
+  }
+  return {};
+}
+
 void CompositorPrivate::ResetCursorMode() {
   // Drop all state left by a move or resize grab.
+  if (cursor_mode_ == CursorMode::kResize && grabbed_toplevel_ != nullptr) {
+    grabbed_toplevel_->SetResizingState(false);
+  }
   cursor_mode_ = CursorMode::kPassthrough;
   grabbed_toplevel_ = nullptr;
   maximize_on_release_ = false;
@@ -2904,6 +2991,13 @@ void CompositorPrivate::BeginInteractive(Toplevel* toplevel, CursorMode mode,
     grab_y_ = cursor_->y - toplevel->scene_tree->node.y;
     return;
   }
+
+  if (edges == 0 || toplevel->maximized || toplevel->RequestedFullscreen()) {
+    ResetCursorMode();
+    return;
+  }
+  toplevel->SetResizingState(true);
+  wlr_cursor_set_xcursor(cursor_, cursor_manager_, ResizeCursorName(edges));
 
   // Resize grabs use global geometry and the requested border.
   grab_box_ = toplevel->FrameGeometry();
@@ -3014,6 +3108,19 @@ void CompositorPrivate::ProcessCursorMotion(uint32_t time_msec) {
       candidate->ssd->SetHovered(
           candidate.get() == toplevel ? ssd_hit : view::Ssd::HitTarget{});
     }
+  }
+  Toplevel* csd_resize_toplevel = nullptr;
+  const view::Ssd::HitTarget csd_resize_hit =
+      CsdResizeHitAt(&csd_resize_toplevel);
+  if (csd_resize_hit.part == view::Ssd::Part::kResize) {
+    if (titlebar_tooltip_ != nullptr) titlebar_tooltip_->Cancel();
+    if (split_screen_switcher_ != nullptr) {
+      split_screen_switcher_->LeaveMaximize();
+    }
+    wlr_cursor_set_xcursor(cursor_, cursor_manager_,
+                           ResizeCursorName(csd_resize_hit.edges));
+    wlr_seat_pointer_clear_focus(seat_);
+    return;
   }
   if (ssd_hit.part == view::Ssd::Part::kMaximize && toplevel != nullptr &&
       toplevel->Surface() != nullptr) {
@@ -3210,6 +3317,20 @@ void CompositorPrivate::OnCursorButton(CompositorPrivate* compositor,
       compositor->ToplevelAt(compositor->cursor_->x, compositor->cursor_->y,
                              &surface, &surface_x, &surface_y);
   const view::Ssd::HitTarget ssd_hit = compositor->SsdHitAt(toplevel);
+  Toplevel* csd_resize_toplevel = nullptr;
+  const view::Ssd::HitTarget csd_resize_hit =
+      compositor->CsdResizeHitAt(&csd_resize_toplevel);
+
+  if (event->button == BTN_LEFT &&
+      csd_resize_hit.part == view::Ssd::Part::kResize &&
+      csd_resize_toplevel != nullptr) {
+    compositor->FocusToplevel(csd_resize_toplevel);
+    compositor->suppress_button_release_ = true;
+    compositor->last_click_toplevel_ = nullptr;
+    compositor->BeginInteractive(csd_resize_toplevel, CursorMode::kResize,
+                                 csd_resize_hit.edges);
+    return;
+  }
 
   if (ssd_hit.part != view::Ssd::Part::kNone) {
     compositor->FocusToplevel(toplevel);
