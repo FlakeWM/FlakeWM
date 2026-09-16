@@ -218,7 +218,7 @@ class KdeProtocolManager::Impl final {
     for (wl_resource* resource : window_management_resources) {
       AnnounceWindow(resource, added);
     }
-    ApplyServerDecoration(surface, false);
+    ApplyServerDecoration(surface);
     if (Blur* blur = FindBlur(surface); blur != nullptr) {
       ApplyBlur(blur);
     }
@@ -362,6 +362,8 @@ class KdeProtocolManager::Impl final {
   struct ServerDecoration {
     Impl* manager;
     wlr_server_decoration* handle;
+    bool active = true;
+    bool server_side = false;
     wl_listener mode = {};
     wl_listener destroy = {};
   };
@@ -376,22 +378,43 @@ class KdeProtocolManager::Impl final {
         wl_container_of(listener, state, listener);
     Impl* manager = state->manager;
     auto* handle = static_cast<wlr_server_decoration*>(data);
+    ServerDecoration* previous =
+        manager->ActiveServerDecoration(handle->surface);
+    const bool has_xdg = manager->compositor->HasXdgDecoration(handle->surface);
     auto* decoration = new ServerDecoration{
         .manager = manager,
         .handle = handle,
+        .server_side =
+            previous != nullptr
+                ? previous->server_side
+                : (has_xdg
+                       ? manager->compositor->SsdEnabledForSurface(
+                             handle->surface)
+                       : handle->mode ==
+                             WLR_SERVER_DECORATION_MANAGER_MODE_SERVER),
     };
+    if (previous != nullptr) {
+      previous->active = false;
+    }
     decoration->mode.notify = OnServerDecorationMode;
     wl_signal_add(&handle->events.mode, &decoration->mode);
     decoration->destroy.notify = OnServerDecorationDestroy;
     wl_signal_add(&handle->events.destroy, &decoration->destroy);
     manager->server_decorations.push_back(decoration);
-    manager->ApplyServerDecoration(handle->surface, false);
+    if (previous == nullptr && !has_xdg) {
+      manager->ApplyServerDecoration(handle->surface);
+    }
   }
 
   static void OnServerDecorationMode(wl_listener* listener, void*) {
     ServerDecoration* decoration = wl_container_of(listener, decoration, mode);
-    decoration->manager->ApplyServerDecoration(decoration->handle->surface,
-                                                true);
+    if (!decoration->active || decoration->handle == nullptr) {
+      return;
+    }
+    decoration->server_side =
+        decoration->handle->mode ==
+        WLR_SERVER_DECORATION_MANAGER_MODE_SERVER;
+    decoration->manager->ApplyServerDecoration(decoration->handle->surface);
   }
 
   static void OnServerDecorationDestroy(wl_listener* listener, void*) {
@@ -404,14 +427,26 @@ class KdeProtocolManager::Impl final {
     delete decoration;
   }
 
-  void ApplyServerDecoration(wlr_surface* surface,
-                             bool explicit_mode_request) const {
-    // GXWM treats xdg-decoration and the legacy KDE decoration protocol as
-    // one decoration state.  In particular, a newly-created legacy object is
-    // not allowed to replace an already established xdg-decoration choice
-    // with the manager's default SERVER mode.  GTK applications can bind both
-    // protocols, and doing so would otherwise add an SSD around their CSD.
-    if (!explicit_mode_request && compositor->HasXdgDecoration(surface)) {
+  ServerDecoration* ActiveServerDecoration(wlr_surface* surface) const {
+    if (surface == nullptr) {
+      return nullptr;
+    }
+    const wlr_surface* root = wlr_surface_get_root_surface(surface);
+    auto found = std::find_if(
+        server_decorations.rbegin(), server_decorations.rend(),
+        [root](const ServerDecoration* decoration) {
+          return decoration != nullptr && decoration->active &&
+                 decoration->handle != nullptr &&
+                 decoration->handle->surface != nullptr &&
+                 wlr_surface_get_root_surface(decoration->handle->surface) ==
+                     root;
+        });
+    return found == server_decorations.rend() ? nullptr : *found;
+  }
+
+  void ApplyServerDecoration(wlr_surface* surface) const {
+    ServerDecoration* decoration = ActiveServerDecoration(surface);
+    if (decoration == nullptr) {
       return;
     }
     core::CompositorPrivate::Toplevel* toplevel =
@@ -419,18 +454,7 @@ class KdeProtocolManager::Impl final {
     if (toplevel == nullptr) {
       return;
     }
-    const wlr_surface* root = wlr_surface_get_root_surface(surface);
-    const bool server_side = std::any_of(
-        server_decorations.begin(), server_decorations.end(),
-        [root](const ServerDecoration* decoration) {
-          return decoration->handle != nullptr &&
-                 decoration->handle->surface != nullptr &&
-                 decoration->handle->mode ==
-                     WLR_SERVER_DECORATION_MANAGER_MODE_SERVER &&
-                 wlr_surface_get_root_surface(decoration->handle->surface) ==
-                     root;
-        });
-    compositor->SetSsdEnabled(toplevel, server_side);
+    compositor->SetSsdEnabled(toplevel, decoration->server_side);
   }
 
   static void BindKeyState(wl_client* client, void* data, uint32_t version,

@@ -306,6 +306,7 @@ class CompositorPrivate final {
   Toplevel* FindToplevel(wlr_xdg_toplevel* handle) const;
   Toplevel* ToplevelForSurface(wlr_surface* surface) const;
   bool HasXdgDecoration(wlr_surface* surface) const;
+  bool SsdEnabledForSurface(wlr_surface* surface) const;
   void SetSsdEnabled(Toplevel* toplevel, bool enabled);
   void SetRoundCorner(Toplevel* toplevel, int radius);
   void RebuildSurfaceClip(Toplevel* toplevel);

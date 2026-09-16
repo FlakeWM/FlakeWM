@@ -1968,6 +1968,11 @@ bool CompositorPrivate::HasXdgDecoration(wlr_surface* surface) const {
       });
 }
 
+bool CompositorPrivate::SsdEnabledForSurface(wlr_surface* surface) const {
+  const Toplevel* toplevel = ToplevelForSurface(surface);
+  return toplevel != nullptr && toplevel->ssd != nullptr;
+}
+
 void CompositorPrivate::SetSsdEnabled(Toplevel* toplevel, bool enabled) {
   if (toplevel == nullptr) {
     return;
