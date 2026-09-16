@@ -216,10 +216,9 @@ void UkuiProtocolManager::Impl::SetShellProperty(
   }
   if (value != 0 && toplevel->ssd != nullptr) {
     state->removed_ssd = true;
-    toplevel->ssd_clip.reset();
-    toplevel->ssd.reset();
+    state->manager->compositor->SetSsdEnabled(toplevel, false);
   } else if (value == 0 && state->removed_ssd && toplevel->ssd == nullptr) {
-    state->manager->compositor->AttachSsd(toplevel);
+    state->manager->compositor->SetSsdEnabled(toplevel, true);
     state->removed_ssd = false;
   }
 }

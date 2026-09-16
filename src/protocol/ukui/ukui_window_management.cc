@@ -241,6 +241,7 @@ void UkuiProtocolManager::Impl::EnterVirtualDesktop(wl_client*,
       *index >= window->manager->compositor->workspace_count_) return;
   core::CompositorPrivate::Toplevel* toplevel =
       window->manager->compositor->ToplevelForSurface(window->surface);
+  window->manager->compositor->SetAllWorkspaces(toplevel, false);
   window->manager->compositor->MoveToplevelToWorkspace(toplevel, *index);
 }
 void UkuiProtocolManager::Impl::NoopWindowRequest(wl_client*, wl_resource*) {}
@@ -389,12 +390,13 @@ void UkuiProtocolManager::Impl::SendWindow(wl_resource* resource,
                             std::max(geometry.height, 0));
   ukui_window_send_themed_icon_name_changed(resource, Safe(toplevel->AppId()));
   for (int index = 0; index < compositor->workspace_count_; ++index) {
-    if (index == toplevel->workspace) continue;
-    const std::string other_desktop = DesktopId(index);
-    ukui_window_send_virtual_desktop_left(resource, other_desktop.c_str());
+    const std::string desktop_id = DesktopId(index);
+    if (toplevel->all_workspaces || index == toplevel->workspace) {
+      ukui_window_send_virtual_desktop_entered(resource, desktop_id.c_str());
+    } else {
+      ukui_window_send_virtual_desktop_left(resource, desktop_id.c_str());
+    }
   }
-  const std::string desktop_id = DesktopId(toplevel->workspace);
-  ukui_window_send_virtual_desktop_entered(resource, desktop_id.c_str());
   Window* parent = window->parent;
   wl_resource* parent_resource = nullptr;
   if (parent != nullptr) {

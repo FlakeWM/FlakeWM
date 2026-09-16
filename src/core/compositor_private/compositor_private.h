@@ -39,6 +39,10 @@
 #include "src/view/multitasking/multitasking.h"
 #include "src/view/ssd/ssd/ssd.h"
 #include "src/view/ssd/ssd_surface_clip/ssd_surface_clip.h"
+#include "src/view/ssd/split_screen_switcher/split_screen_switcher.h"
+#include "src/view/ssd/split_screen_switcher/tile_animation.h"
+#include "src/view/ssd/titlebar_tooltip/titlebar_tooltip.h"
+#include "src/view/ssd/window_menu/window_menu.h"
 #include "src/view/touch_feedback.h"
 #include "src/view/window_previews/window_previews.h"
 #include "src/view/window_selecter/window_selector.h"
@@ -221,6 +225,9 @@ class CompositorPrivate final {
     static void OnRequestMove(Toplevel* toplevel, void*);
     static void OnRequestResize(Toplevel* toplevel,
                                 wlr_xdg_toplevel_resize_event* event);
+    static void OnRequestShowWindowMenu(
+        Toplevel* toplevel,
+        wlr_xdg_toplevel_show_window_menu_event* event);
     static void OnSetTitle(Toplevel* toplevel, void*);
     static void OnSetAppId(Toplevel* toplevel, void*);
     static void OnSetParent(Toplevel* toplevel, void*);
@@ -233,13 +240,17 @@ class CompositorPrivate final {
     bool maximized = false;
     bool minimized = false;
     bool kept_above = false;
+    bool all_workspaces = false;
     int workspace = 0;
     bool has_restore_box = false;
     bool restore_position_pending = false;
+    bool tiled = false;
+    bool tile_position_pending = false;
     bool capabilities_advertised = false;
     uint32_t advertised_capabilities = 0;
     wlr_box restore_box = {};
     wlr_box maximized_box = {};
+    wlr_box tiled_box = {};
     wlr_output* maximized_output = nullptr;
     std::unique_ptr<view::Ssd> ssd;
     std::unique_ptr<view::SsdSurfaceClip> ssd_clip;
@@ -251,6 +262,8 @@ class CompositorPrivate final {
     utils::SignalListener<Toplevel, void> request_move{this, OnRequestMove};
     utils::SignalListener<Toplevel, wlr_xdg_toplevel_resize_event>
         request_resize{this, OnRequestResize};
+    utils::SignalListener<Toplevel, wlr_xdg_toplevel_show_window_menu_event>
+        request_show_window_menu{this, OnRequestShowWindowMenu};
     utils::SignalListener<Toplevel, void> request_maximize{this,
                                                            OnRequestMaximize};
     utils::SignalListener<Toplevel, void> request_minimize{this,
@@ -291,6 +304,7 @@ class CompositorPrivate final {
                        double* surface_x, double* surface_y) const;
   Toplevel* FindToplevel(wlr_xdg_toplevel* handle) const;
   Toplevel* ToplevelForSurface(wlr_surface* surface) const;
+  void SetSsdEnabled(Toplevel* toplevel, bool enabled);
   void AttachSsd(Toplevel* toplevel);
   view::Ssd::HitTarget SsdHitAt(const Toplevel* toplevel) const;
   void FocusToplevel(Toplevel* toplevel);
@@ -302,6 +316,10 @@ class CompositorPrivate final {
   bool RemoveWorkspace(int workspace);
   bool ReorderWorkspace(int from, int to);
   void SetKeptAbove(Toplevel* toplevel, bool kept_above);
+  void SetAllWorkspaces(Toplevel* toplevel, bool all_workspaces);
+  bool ShowWindowMenu(Toplevel* toplevel, double x, double y);
+  void HandleWindowMenuAction(wlr_surface* surface,
+                              view::WindowMenu::Action action);
   void SetMultitaskingSourcesHidden(bool hidden);
   void SetWindowPreviewsSourcesHidden(bool hidden);
   void FocusLayerSurface(LayerSurface* layer_surface);
@@ -312,6 +330,8 @@ class CompositorPrivate final {
   void ArrangeLayers(Output* output);
   void SetMaximized(Toplevel* toplevel, bool maximized);
   void ToggleMaximized(Toplevel* toplevel);
+  void TileToplevel(Toplevel* toplevel,
+                    view::SplitScreenSwitcher::Tile tile);
   void Minimize(Toplevel* toplevel);
   void RestoreForMove(Toplevel* toplevel);
   bool CursorAtOutputTop() const;
@@ -398,6 +418,10 @@ class CompositorPrivate final {
   std::unique_ptr<view::AppSwitcher> app_switcher_;
   std::unique_ptr<view::Multitasking> multitasking_;
   std::unique_ptr<view::WindowPreviews> window_previews_;
+  std::unique_ptr<view::WindowMenu> window_menu_;
+  std::unique_ptr<view::TitlebarTooltip> titlebar_tooltip_;
+  std::unique_ptr<view::SplitScreenSwitcher> split_screen_switcher_;
+  std::unique_ptr<view::TileAnimation> tile_animation_;
   std::unique_ptr<view::WindowSelector> window_selector_;
   std::unique_ptr<xwayland::XWaylandManager> xwayland_;
   wlr_seat* seat_ = nullptr;
@@ -480,6 +504,7 @@ class CompositorPrivate final {
   double last_click_x_ = 0;
   double last_click_y_ = 0;
   bool suppress_button_release_ = false;
+  Toplevel* pending_window_menu_ = nullptr;
   bool maximize_on_release_ = false;
   bool cursor_hidden_by_touch_ = false;
   bool touch_pointer_frame_pending_ = false;

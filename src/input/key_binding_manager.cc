@@ -27,8 +27,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace flakewm {
 namespace input {
@@ -179,6 +181,8 @@ const char* KeyBindingManager::TypeName(KeyBindingType type) {
       return "WLCOM_WINDOW_ACTION_MAXIMIZE";
     case KeyBindingType::kWindowClose:
       return "WLCOM_WINDOW_ACTION_CLOSE";
+    case KeyBindingType::kWindowMenu:
+      return "WLCOM_WINDOW_ACTION_MENU";
     case KeyBindingType::kCount:
       return nullptr;
   }

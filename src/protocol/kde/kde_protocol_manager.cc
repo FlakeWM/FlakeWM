@@ -420,9 +420,7 @@ class KdeProtocolManager::Impl final {
                  wlr_surface_get_root_surface(decoration->handle->surface) ==
                      root;
         });
-    if (server_side) {
-      compositor->AttachSsd(toplevel);
-    }
+    compositor->SetSsdEnabled(toplevel, server_side);
   }
 
   static void BindKeyState(wl_client* client, void* data, uint32_t version,
@@ -980,6 +978,7 @@ class KdeProtocolManager::Impl final {
                       window->manager->compositor->workspace_count_)) return;
     core::CompositorPrivate::Toplevel* toplevel =
         window->manager->compositor->ToplevelForSurface(window->surface);
+    window->manager->compositor->SetAllWorkspaces(toplevel, false);
     window->manager->compositor->MoveToplevelToWorkspace(
         toplevel, static_cast<int>(number));
   }
@@ -1011,6 +1010,7 @@ class KdeProtocolManager::Impl final {
         *index >= window->manager->compositor->workspace_count_) return;
     core::CompositorPrivate::Toplevel* toplevel =
         window->manager->compositor->ToplevelForSurface(window->surface);
+    window->manager->compositor->SetAllWorkspaces(toplevel, false);
     window->manager->compositor->MoveToplevelToWorkspace(toplevel, *index);
   }
   static void NoopDesktopId(wl_client*, wl_resource*, const char*) {}
@@ -1147,14 +1147,15 @@ class KdeProtocolManager::Impl final {
     if (wl_resource_get_version(resource) >=
         ORG_KDE_PLASMA_WINDOW_VIRTUAL_DESKTOP_ENTERED_SINCE_VERSION) {
       for (int index = 0; index < compositor->workspace_count_; ++index) {
-        if (index == toplevel->workspace) continue;
-        const std::string other_desktop = DesktopId(index);
-        org_kde_plasma_window_send_virtual_desktop_left(resource,
-                                                        other_desktop.c_str());
+        const std::string desktop_id = DesktopId(index);
+        if (toplevel->all_workspaces || index == toplevel->workspace) {
+          org_kde_plasma_window_send_virtual_desktop_entered(
+              resource, desktop_id.c_str());
+        } else {
+          org_kde_plasma_window_send_virtual_desktop_left(
+              resource, desktop_id.c_str());
+        }
       }
-      const std::string desktop_id = DesktopId(toplevel->workspace);
-      org_kde_plasma_window_send_virtual_desktop_entered(resource,
-                                                         desktop_id.c_str());
     }
   }
 

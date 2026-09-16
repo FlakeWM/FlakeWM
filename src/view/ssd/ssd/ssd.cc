@@ -91,7 +91,7 @@ void Ssd::SetActive(bool active) {
   renderer_.SetActive(active);
   if (shadow_ != nullptr) {
     shadow_->Update(FrameGeometry(client_geometry_), active_, dialog_,
-                    maximized_);
+                    maximized_ || tiled_);
   }
 }
 
@@ -101,6 +101,13 @@ void Ssd::SetMaximized(bool maximized) {
   }
   maximized_ = maximized;
   renderer_.SetMaximized(maximized);
+  Arrange();
+}
+
+void Ssd::SetTiled(bool tiled) {
+  if (tiled_ == tiled) return;
+  tiled_ = tiled;
+  renderer_.SetTiled(tiled);
   Arrange();
 }
 
@@ -225,7 +232,7 @@ void Ssd::Arrange() {
 
   const wlr_box frame = FrameGeometry(client_geometry_);
   if (shadow_ != nullptr) {
-    shadow_->Update(frame, active_, dialog_, maximized_);
+    shadow_->Update(frame, active_, dialog_, maximized_ || tiled_);
   }
   wlr_scene_node_set_enabled(&tree_->node, true);
   wlr_scene_node_set_position(&titlebar_->node, client_geometry_.x,
@@ -237,7 +244,9 @@ void Ssd::Arrange() {
   Render();
 }
 
-int Ssd::BorderWidth() const { return maximized_ ? 0 : kBorderWidth; }
+int Ssd::BorderWidth() const {
+  return maximized_ || tiled_ ? 0 : kBorderWidth;
+}
 
 void Ssd::OnTreeDestroy(Ssd* ssd, void*) {
   ssd->tree_destroy_.Disconnect();

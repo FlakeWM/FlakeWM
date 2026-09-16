@@ -138,6 +138,8 @@ void SsdRenderer::SetMaximized(bool maximized) {
   SetProperty("maximized", maximized);
 }
 
+void SsdRenderer::SetTiled(bool tiled) { SetProperty("tiled", tiled); }
+
 void SsdRenderer::SetDialog(bool dialog) { SetProperty("dialog", dialog); }
 
 void SsdRenderer::SetCanMinimize(bool can_minimize) {

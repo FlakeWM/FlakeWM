@@ -45,6 +45,7 @@ enum class KeyBindingType : std::uint8_t {
   kWindowMinimize,
   kWindowMaximize,
   kWindowClose,
+  kWindowMenu,
   kCount,
 };
 

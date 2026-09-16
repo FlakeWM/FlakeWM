@@ -16,62 +16,54 @@
  * You should have received a copy of the GNU General Public License along with
  * FLAKEWM. If not, see <https://www.gnu.org/licenses/>.
  * ----------------------------------------------------------------------------
- * QtQuick renderer for an SSD titlebar.
+ * Adapted from GXDE-Wlcom, originally licensed under GPLv3.
+ * Code has been modified to fit in Wlroots 0.20.2 & C++.
+ * Now re-licensed under GPLv3.
  */
 
-#ifndef SRC_VIEW_SSD_SSD_RENDERER_SSD_RENDERER_H_
-#define SRC_VIEW_SSD_SSD_RENDERER_SSD_RENDERER_H_
+#ifndef SRC_VIEW_SSD_POPUP_RENDERER_POPUP_RENDERER_H_
+#define SRC_VIEW_SSD_POPUP_RENDERER_POPUP_RENDERER_H_
 
 #include <QMetaObject>
-#include <QString>
-#include <array>
+#include <QVariant>
 #include <memory>
 
-#include "src/view/ssd/ssd_buffer/ssd_buffer.h"
+#include "src/wlr_wrapper/wlroots.h"
 
-class QQmlEngine;
 class QQuickItem;
 class QQuickRenderControl;
 class QQuickWindow;
-class QVariant;
 
 namespace flakewm {
 namespace view {
 
-class SsdRenderer final {
- public:
-  SsdRenderer();
-  ~SsdRenderer();
+class SsdBuffer;
 
-  SsdRenderer(const SsdRenderer&) = delete;
-  SsdRenderer& operator=(const SsdRenderer&) = delete;
+class PopupRenderer final {
+ public:
+  explicit PopupRenderer(const char* resource_url);
+  ~PopupRenderer();
+
+  PopupRenderer(const PopupRenderer&) = delete;
+  PopupRenderer& operator=(const PopupRenderer&) = delete;
 
   bool IsValid() const;
   bool Resize(int width, int height);
-  void SetActive(bool active);
-  void SetMaximized(bool maximized);
-  void SetTiled(bool tiled);
-  void SetDialog(bool dialog);
-  void SetCanMinimize(bool can_minimize);
-  void SetCanMaximize(bool can_maximize);
-  void SetTitle(const QString& title);
-  void SetAppId(const QString& app_id);
-  void SetHoveredPart(int part);
-  void SetPressedPart(int part);
+  void SetProperty(const char* name, const QVariant& value);
   bool Render();
   wlr_buffer* Buffer() const;
 
  private:
-  static QQmlEngine* Engine();
   void DropBuffers();
-  void SetProperty(const char* name, const QVariant& value);
 
   std::unique_ptr<QQuickRenderControl> render_control_;
   std::unique_ptr<QQuickWindow> window_;
   QQuickItem* root_item_ = nullptr;
-  std::array<SsdBuffer*, 2> buffers_ = {};
+  SsdBuffer* buffers_[2] = {};
   QMetaObject::Connection render_requested_;
   QMetaObject::Connection scene_changed_;
+  int width_ = 0;
+  int height_ = 0;
   int current_buffer_ = 0;
   bool has_frame_ = false;
   bool initialized_ = false;
@@ -81,4 +73,4 @@ class SsdRenderer final {
 }  // namespace view
 }  // namespace flakewm
 
-#endif  // SRC_VIEW_SSD_SSD_RENDERER_SSD_RENDERER_H_
+#endif  // SRC_VIEW_SSD_POPUP_RENDERER_POPUP_RENDERER_H_

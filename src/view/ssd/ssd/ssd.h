@@ -59,6 +59,7 @@ class Ssd final {
   void SetGeometry(const wlr_box& client_geometry);
   void SetActive(bool active);
   void SetMaximized(bool maximized);
+  void SetTiled(bool tiled);
   void SetDialog(bool dialog);
   void SetCapabilities(bool can_minimize, bool can_maximize);
   void SetTitle(const std::string& title);
@@ -87,6 +88,7 @@ class Ssd final {
   std::unique_ptr<SsdShadow> shadow_;
   bool active_ = false;
   bool maximized_ = false;
+  bool tiled_ = false;
   bool dialog_ = false;
   bool can_minimize_ = true;
   bool can_maximize_ = true;

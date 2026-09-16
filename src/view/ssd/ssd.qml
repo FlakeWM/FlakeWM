@@ -1,3 +1,25 @@
+/*
+ * Copyright (C) 2026 CharOfString <root@charofstring.cc>
+ *
+ * This file is part of FLAKEWM.
+ *
+ * FLAKEWM is free software: you can redistribute it and/or modify it under the
+ * terms of the GNU General Public License as published by the Free Software
+ * Foundation, either version 3 of the License, or (at your option) any later
+ * version.
+ *
+ * FLAKEWM is distributed in the hope that it will be useful, but WITHOUT ANY
+ * WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+ * FOR A PARTICULAR PURPOSE. See the GNU General Public License for more
+ * details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * FLAKEWM. If not, see <https://www.gnu.org/licenses/>.
+ * ----------------------------------------------------------------------------
+ * Adapted from GXDE-KWin, originally licensed under GPL-2.0.
+ * Now re-licensed under GPLv3.
+ */
+
 import QtQuick
 
 Item {
@@ -5,6 +27,7 @@ Item {
 
   property bool active: false
   property bool maximized: false
+  property bool tiled: false
   property bool dialog: false
   property bool canMinimize: true
   property bool canMaximize: true
@@ -20,9 +43,9 @@ Item {
     id: background
 
     width: parent.width
-    height: parent.height + (root.maximized ? 0 : 7)
+    height: parent.height + (root.maximized || root.tiled ? 0 : 7)
     color: "#ffffff"
-    radius: root.maximized ? 0 : 7
+    radius: root.maximized || root.tiled ? 0 : 7
 
     Behavior on radius {
       NumberAnimation {
@@ -91,16 +114,25 @@ Item {
       anchors.fill: parent
       source: parent.normalSource
       opacity: !parent.hovered && !parent.pressed ? 1.0 : 0.0
+      Behavior on opacity {
+        NumberAnimation { duration: 100; easing.type: Easing.OutCubic }
+      }
     }
     Image {
       anchors.fill: parent
       source: parent.hoverSource
       opacity: parent.hovered && !parent.pressed ? 1.0 : 0.0
+      Behavior on opacity {
+        NumberAnimation { duration: 100; easing.type: Easing.OutCubic }
+      }
     }
     Image {
       anchors.fill: parent
       source: parent.pressSource
       opacity: parent.pressed ? 1.0 : 0.0
+      Behavior on opacity {
+        NumberAnimation { duration: 70; easing.type: Easing.OutCubic }
+      }
     }
 
     Behavior on width {

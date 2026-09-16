@@ -199,12 +199,7 @@ void TreelandProtocolManagerImpl::SetTitlebar(wlr_surface* surface,
   if (compositor == nullptr) return;
   auto* toplevel = compositor->ToplevelForSurface(surface);
   if (toplevel == nullptr) return;
-  if (!enabled) {
-    toplevel->ssd_clip.reset();
-    toplevel->ssd.reset();
-  } else if (toplevel->ssd == nullptr && toplevel->scene_tree != nullptr) {
-    compositor->AttachSsd(toplevel);
-  }
+  compositor->SetSsdEnabled(toplevel, enabled);
 }
 
 void TreelandProtocolManagerImpl::SetBlur(wlr_surface* surface,

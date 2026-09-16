@@ -16,55 +16,57 @@
  * You should have received a copy of the GNU General Public License along with
  * FLAKEWM. If not, see <https://www.gnu.org/licenses/>.
  * ----------------------------------------------------------------------------
- * QtQuick renderer for an SSD titlebar.
+ * Adapted from GXDE-Wlcom, originally licensed under GPLv3.
+ * Code has been modified to fit in Wlroots 0.20.2 & C++.
+ * Now re-licensed under GPLv3.
  */
 
-#ifndef SRC_VIEW_SSD_SSD_RENDERER_SSD_RENDERER_H_
-#define SRC_VIEW_SSD_SSD_RENDERER_SSD_RENDERER_H_
+#ifndef SRC_VIEW_SSD_WINDOW_MENU_WINDOW_MENU_RENDERER_H_
+#define SRC_VIEW_SSD_WINDOW_MENU_WINDOW_MENU_RENDERER_H_
 
 #include <QMetaObject>
-#include <QString>
+#include <QVariantList>
 #include <array>
 #include <memory>
 
-#include "src/view/ssd/ssd_buffer/ssd_buffer.h"
+#include "src/wlr_wrapper/wlroots.h"
 
-class QQmlEngine;
 class QQuickItem;
 class QQuickRenderControl;
 class QQuickWindow;
-class QVariant;
 
 namespace flakewm {
 namespace view {
 
-class SsdRenderer final {
- public:
-  SsdRenderer();
-  ~SsdRenderer();
+class SsdBuffer;
 
-  SsdRenderer(const SsdRenderer&) = delete;
-  SsdRenderer& operator=(const SsdRenderer&) = delete;
+class WindowMenuRenderer final {
+ public:
+  static constexpr int kShadowMargin = 10;
+  static constexpr int kContentWidth = 270;
+  static constexpr int kContentMargin = 12;
+  static constexpr int kItemHeight = 26;
+  static constexpr int kItemCount = 9;
+  static constexpr int kContentHeight =
+      kContentMargin * 2 + kItemHeight * kItemCount;
+  static constexpr int kWidth = kContentWidth + kShadowMargin * 2;
+  static constexpr int kHeight = kContentHeight + kShadowMargin * 2 + 2;
+
+  WindowMenuRenderer();
+  ~WindowMenuRenderer();
+
+  WindowMenuRenderer(const WindowMenuRenderer&) = delete;
+  WindowMenuRenderer& operator=(const WindowMenuRenderer&) = delete;
 
   bool IsValid() const;
-  bool Resize(int width, int height);
-  void SetActive(bool active);
-  void SetMaximized(bool maximized);
-  void SetTiled(bool tiled);
-  void SetDialog(bool dialog);
-  void SetCanMinimize(bool can_minimize);
-  void SetCanMaximize(bool can_maximize);
-  void SetTitle(const QString& title);
-  void SetAppId(const QString& app_id);
-  void SetHoveredPart(int part);
-  void SetPressedPart(int part);
+  void SetItems(const QVariantList& items);
+  void SetInteraction(int hovered_index, int pressed_index);
   bool Render();
   wlr_buffer* Buffer() const;
 
  private:
-  static QQmlEngine* Engine();
-  void DropBuffers();
   void SetProperty(const char* name, const QVariant& value);
+  void DropBuffers();
 
   std::unique_ptr<QQuickRenderControl> render_control_;
   std::unique_ptr<QQuickWindow> window_;
@@ -81,4 +83,4 @@ class SsdRenderer final {
 }  // namespace view
 }  // namespace flakewm
 
-#endif  // SRC_VIEW_SSD_SSD_RENDERER_SSD_RENDERER_H_
+#endif  // SRC_VIEW_SSD_WINDOW_MENU_WINDOW_MENU_RENDERER_H_

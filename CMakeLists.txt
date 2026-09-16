@@ -238,9 +238,16 @@ set(flakewm_CXX_SOURCES
   src/protocol/ukui/ukui_window_management.cc
   src/view/ssd/ssd/ssd.cc
   src/view/ssd/ssd_buffer/ssd_buffer.cc
+  src/view/ssd/popup_renderer/popup_animation.cc
+  src/view/ssd/popup_renderer/popup_renderer.cc
   src/view/ssd/ssd_renderer/ssd_renderer.cc
   src/view/ssd/ssd_shadow/ssd_shadow.cc
   src/view/ssd/ssd_surface_clip/ssd_surface_clip.cc
+  src/view/ssd/split_screen_switcher/split_screen_switcher.cc
+  src/view/ssd/split_screen_switcher/tile_animation.cc
+  src/view/ssd/titlebar_tooltip/titlebar_tooltip.cc
+  src/view/ssd/window_menu/window_menu.cc
+  src/view/ssd/window_menu/window_menu_renderer.cc
   src/view/ssd/window_icon_provider/window_icon_provider.cc
   src/xwayland/xsurface/xsurface.cc
   src/xwayland/xwayland_manager/xwayland_manager.cc
@@ -309,9 +316,16 @@ add_executable(flakewm
   src/protocol/ukui/ukui_protocol_manager_internal.h
   src/view/ssd/ssd/ssd.h
   src/view/ssd/ssd_buffer/ssd_buffer.h
+  src/view/ssd/popup_renderer/popup_animation.h
+  src/view/ssd/popup_renderer/popup_renderer.h
   src/view/ssd/ssd_renderer/ssd_renderer.h
   src/view/ssd/ssd_shadow/ssd_shadow.h
   src/view/ssd/ssd_surface_clip/ssd_surface_clip.h
+  src/view/ssd/split_screen_switcher/split_screen_switcher.h
+  src/view/ssd/split_screen_switcher/tile_animation.h
+  src/view/ssd/titlebar_tooltip/titlebar_tooltip.h
+  src/view/ssd/window_menu/window_menu.h
+  src/view/ssd/window_menu/window_menu_renderer.h
   src/view/ssd/window_icon_provider/window_icon_provider.h
   src/xwayland/xsurface/xsurface.h
   src/xwayland/xwayland_manager/xwayland_manager.h
@@ -338,6 +352,20 @@ qt_add_resources(flakewm "ssd_qml"
     src/view/ssd/icons/unmaximize_hover.svg
     src/view/ssd/icons/unmaximize_normal.svg
     src/view/ssd/icons/unmaximize_press.svg
+)
+
+qt_add_resources(flakewm "window_menu_qml"
+  PREFIX "/flakewm"
+  BASE src/view/ssd/window_menu
+  FILES src/view/ssd/window_menu/window_menu.qml
+)
+
+qt_add_resources(flakewm "titlebar_hover_qml"
+  PREFIX "/flakewm"
+  BASE src/view/ssd
+  FILES
+    src/view/ssd/split_screen_switcher/split_screen_switcher.qml
+    src/view/ssd/titlebar_tooltip/titlebar_tooltip.qml
 )
 
 qt_add_resources(flakewm "touch_feedback_qml"
