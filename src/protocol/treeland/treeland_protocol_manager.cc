@@ -23,6 +23,8 @@
  * Original code is modified to adapt C++ and Wlroots 0.20.2.
  */
 
+#include "src/protocol/treeland/treeland_protocol_manager.h"
+
 #include <algorithm>
 #include <cmath>
 #include <memory>
@@ -34,7 +36,6 @@
 #include "src/protocol/treeland/treeland_protocol_manager_internal.h"
 #include "src/render/backdrop_blur_renderer.h"
 #include "src/view/window_selecter/window_selector.h"
-#include "src/protocol/treeland/treeland_protocol_manager.h"
 
 namespace flakewm {
 namespace protocol {
@@ -206,8 +207,13 @@ void TreelandProtocolManagerImpl::SetRoundCorner(wlr_surface* surface,
                                                  int radius) const {
   if (compositor == nullptr) return;
   auto* toplevel = compositor->ToplevelForSurface(surface);
-  if (toplevel == nullptr) return;
-  compositor->SetRoundCorner(toplevel, radius);
+  if (toplevel != nullptr) {
+    compositor->SetRoundCorner(toplevel, radius);
+    return;
+  }
+  // Personalization is also used by in-process DTK popup surfaces. They are
+  // not toplevels, but still need the same renderer mask as their blur.
+  compositor->SetSurfaceRoundCorner(surface, radius);
 }
 
 void TreelandProtocolManagerImpl::SetBlur(wlr_surface* surface,

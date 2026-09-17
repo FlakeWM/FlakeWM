@@ -37,10 +37,10 @@
 #include "src/utils/signal_listener.h"
 #include "src/view/app_switcher/app_switcher.h"
 #include "src/view/multitasking/multitasking.h"
-#include "src/view/ssd/ssd/ssd.h"
-#include "src/view/ssd/ssd_surface_clip/ssd_surface_clip.h"
 #include "src/view/ssd/split_screen_switcher/split_screen_switcher.h"
 #include "src/view/ssd/split_screen_switcher/tile_animation.h"
+#include "src/view/ssd/ssd/ssd.h"
+#include "src/view/ssd/ssd_surface_clip/ssd_surface_clip.h"
 #include "src/view/ssd/titlebar_tooltip/titlebar_tooltip.h"
 #include "src/view/ssd/window_menu/window_menu.h"
 #include "src/view/touch_feedback.h"
@@ -227,8 +227,7 @@ class CompositorPrivate final {
     static void OnRequestResize(Toplevel* toplevel,
                                 wlr_xdg_toplevel_resize_event* event);
     static void OnRequestShowWindowMenu(
-        Toplevel* toplevel,
-        wlr_xdg_toplevel_show_window_menu_event* event);
+        Toplevel* toplevel, wlr_xdg_toplevel_show_window_menu_event* event);
     static void OnSetTitle(Toplevel* toplevel, void*);
     static void OnSetAppId(Toplevel* toplevel, void*);
     static void OnSetParent(Toplevel* toplevel, void*);
@@ -310,6 +309,8 @@ class CompositorPrivate final {
   bool SsdEnabledForSurface(wlr_surface* surface) const;
   void SetSsdEnabled(Toplevel* toplevel, bool enabled);
   void SetRoundCorner(Toplevel* toplevel, int radius);
+  void SetSurfaceRoundCorner(wlr_surface* surface, int radius);
+  void ClearSurfaceRoundCorner(wlr_surface* surface);
   void RebuildSurfaceClip(Toplevel* toplevel);
   void AttachSsd(Toplevel* toplevel);
   view::Ssd::HitTarget SsdHitAt(const Toplevel* toplevel) const;
@@ -336,8 +337,7 @@ class CompositorPrivate final {
   void ArrangeLayers(Output* output);
   void SetMaximized(Toplevel* toplevel, bool maximized);
   void ToggleMaximized(Toplevel* toplevel);
-  void TileToplevel(Toplevel* toplevel,
-                    view::SplitScreenSwitcher::Tile tile);
+  void TileToplevel(Toplevel* toplevel, view::SplitScreenSwitcher::Tile tile);
   void Minimize(Toplevel* toplevel);
   void RestoreForMove(Toplevel* toplevel);
   bool CursorAtOutputTop() const;

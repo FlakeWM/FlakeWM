@@ -744,6 +744,9 @@ flycheck_*.el
 # network security
 /network-security.data
 
-# ---> Provate
+# ---> Private
 # Personal stuff
 .charofstring/*
+
+# Individual test scripts
+.nested/

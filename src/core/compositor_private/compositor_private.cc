@@ -335,7 +335,8 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
         WP_COLOR_MANAGER_V1_RENDER_INTENT_PERCEPTUAL,
     };
     const wlr_color_manager_v1_options options = {
-        .features = {
+        .features =
+            {
                 .icc_v2_v4 = false,
                 .parametric = true,
                 .set_primaries = false,
@@ -654,8 +655,8 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
         entries.reserve(toplevels_.size());
         for (const std::unique_ptr<Toplevel>& toplevel : toplevels_) {
           if (!toplevel->mapped || !toplevel->IsAlive() ||
-              !toplevel->CanManage() ||
-              !toplevel->WantsFocus() || toplevel->Surface() == nullptr) {
+              !toplevel->CanManage() || !toplevel->WantsFocus() ||
+              toplevel->Surface() == nullptr) {
             continue;
           }
           wlr_box geometry = toplevel->Geometry();
@@ -1148,8 +1149,7 @@ void CompositorPrivate::Keyboard::OnKey(Keyboard* keyboard,
     keyboard->compositor->protocol_manager_->NotifyKeyboard(event->time_msec);
   }
   if (keyboard->compositor->window_menu_ != nullptr &&
-      keyboard->compositor->window_menu_->HandleKey(keyboard->handle,
-                                                    *event)) {
+      keyboard->compositor->window_menu_->HandleKey(keyboard->handle, *event)) {
     return;
   }
   if (keyboard->compositor->window_selector_ != nullptr &&
@@ -1468,8 +1468,7 @@ void CompositorPrivate::Toplevel::OnUnmap(Toplevel* toplevel, void*) {
         toplevel->Surface());
   }
   if (toplevel->compositor->window_menu_ != nullptr) {
-    toplevel->compositor->window_menu_->SurfaceUnavailable(
-        toplevel->Surface());
+    toplevel->compositor->window_menu_->SurfaceUnavailable(toplevel->Surface());
   }
   if (toplevel->compositor->titlebar_tooltip_ != nullptr) {
     toplevel->compositor->titlebar_tooltip_->SurfaceUnavailable(
@@ -1504,9 +1503,11 @@ void CompositorPrivate::Toplevel::OnCommit(Toplevel* toplevel, void*) {
     toplevel->compositor->multitasking_->SurfaceUpdated(toplevel->Surface());
   }
   if (toplevel->compositor->window_previews_ != nullptr) {
-    toplevel->compositor->window_previews_->SurfaceUpdated(
-        toplevel->Surface());
+    toplevel->compositor->window_previews_->SurfaceUpdated(toplevel->Surface());
   }
+  // Renderer-native rounding also covers XWayland surfaces, whose derived
+  // class intentionally has no wlr_xdg_toplevel handle.
+  toplevel->compositor->RebuildSurfaceClip(toplevel);
   if (toplevel->handle == nullptr) {
     return;
   }
@@ -1538,12 +1539,6 @@ void CompositorPrivate::Toplevel::OnCommit(Toplevel* toplevel, void*) {
       toplevel->ssd_initial_position_pending = false;
     }
   }
-  if (toplevel->ssd_clip != nullptr) {
-    const bool fullscreen = toplevel->handle->current.fullscreen;
-    toplevel->ssd_clip->Update(
-        geometry, toplevel->maximized || toplevel->tiled || fullscreen);
-  }
-
   // Geometry can change after configure. Keep the requested frame position.
   const wlr_box frame = toplevel->FrameGeometry();
   if (toplevel->maximized && toplevel->maximized_box.width > 0 &&
@@ -1551,8 +1546,7 @@ void CompositorPrivate::Toplevel::OnCommit(Toplevel* toplevel, void*) {
     wlr_scene_node_set_position(&toplevel->scene_tree->node,
                                 toplevel->maximized_box.x - frame.x,
                                 toplevel->maximized_box.y - frame.y);
-  } else if (toplevel->tile_position_pending &&
-             toplevel->tiled_box.width > 0 &&
+  } else if (toplevel->tile_position_pending && toplevel->tiled_box.width > 0 &&
              toplevel->tiled_box.height > 0) {
     wlr_scene_node_set_position(&toplevel->scene_tree->node,
                                 toplevel->tiled_box.x - frame.x,
@@ -1588,6 +1582,7 @@ void CompositorPrivate::Toplevel::OnRequestMinimize(Toplevel* toplevel, void*) {
 void CompositorPrivate::Toplevel::OnRequestFullscreen(Toplevel* toplevel,
                                                       void*) {
   toplevel->SetFullscreenState(toplevel->RequestedFullscreen());
+  toplevel->compositor->RebuildSurfaceClip(toplevel);
   if (toplevel->compositor->protocol_manager_ != nullptr) {
     toplevel->compositor->protocol_manager_->UpdateToplevel(
         toplevel->Surface());
@@ -1675,8 +1670,7 @@ void CompositorPrivate::Toplevel::OnDestroy(Toplevel* toplevel, void*) {
         toplevel->Surface());
   }
   if (toplevel->compositor->window_menu_ != nullptr) {
-    toplevel->compositor->window_menu_->SurfaceUnavailable(
-        toplevel->Surface());
+    toplevel->compositor->window_menu_->SurfaceUnavailable(toplevel->Surface());
   }
   if (toplevel->compositor->titlebar_tooltip_ != nullptr) {
     toplevel->compositor->titlebar_tooltip_->SurfaceUnavailable(
@@ -1696,6 +1690,7 @@ void CompositorPrivate::Toplevel::OnDestroy(Toplevel* toplevel, void*) {
   if (toplevel->compositor->grabbed_toplevel_ == toplevel) {
     toplevel->compositor->ResetCursorMode();
   }
+  toplevel->compositor->ClearSurfaceRoundCorner(toplevel->Surface());
   toplevel->map.Disconnect();
   toplevel->unmap.Disconnect();
   toplevel->commit.Disconnect();
@@ -1732,6 +1727,9 @@ void CompositorPrivate::Popup::OnCommit(Popup* popup, void*) {
 
 void CompositorPrivate::Popup::OnDestroy(Popup* popup, void*) {
   // The scene node is owned by its parent tree.
+  if (popup->handle != nullptr && popup->handle->base != nullptr) {
+    popup->compositor->ClearSurfaceRoundCorner(popup->handle->base->surface);
+  }
   popup->commit.Disconnect();
   popup->destroy.Disconnect();
   popup->handle = nullptr;
@@ -2003,27 +2001,38 @@ void CompositorPrivate::SetRoundCorner(Toplevel* toplevel, int radius) {
   RebuildSurfaceClip(toplevel);
 }
 
+void CompositorPrivate::SetSurfaceRoundCorner(wlr_surface* surface,
+                                              int radius) {
+  if (surface == nullptr || backdrop_blur_renderer_ == nullptr) return;
+  radius = std::clamp(radius, 0, 64);
+  backdrop_blur_renderer_->SetSurfaceRoundCorner(
+      surface, {radius, radius, radius, radius});
+}
+
+void CompositorPrivate::ClearSurfaceRoundCorner(wlr_surface* surface) {
+  if (surface != nullptr && backdrop_blur_renderer_ != nullptr) {
+    backdrop_blur_renderer_->ClearSurfaceRoundCorner(surface);
+  }
+}
+
 void CompositorPrivate::RebuildSurfaceClip(Toplevel* toplevel) {
   if (toplevel == nullptr) {
     return;
   }
+  // Renderer-native rounding replaces the old duplicated-subsurface strips.
+  // It covers XDG, popup and XWayland buffers and shares its mask with blur.
   toplevel->ssd_clip.reset();
-  if (toplevel->scene_tree == nullptr || toplevel->Surface() == nullptr ||
-      toplevel->corner_radius <= 0) {
+  if (toplevel->Surface() == nullptr || backdrop_blur_renderer_ == nullptr) {
     return;
   }
-  toplevel->ssd_clip = view::SsdSurfaceClip::Create(
-      toplevel->scene_tree, toplevel->Surface(), toplevel->corner_radius,
-      toplevel->ssd == nullptr);
-  if (toplevel->ssd_clip == nullptr) {
-    ABSL_LOG(ERROR) << "Failed to create window surface clip";
-    return;
-  }
-  const bool fullscreen = toplevel->handle != nullptr &&
-                          toplevel->handle->current.fullscreen;
-  toplevel->ssd_clip->Update(
-      toplevel->Geometry(),
-      toplevel->maximized || toplevel->tiled || fullscreen);
+  const bool rounded = toplevel->corner_radius > 0 && !toplevel->maximized &&
+                       !toplevel->tiled && !toplevel->RequestedFullscreen();
+  const int radius = rounded ? toplevel->corner_radius : 0;
+  // The SSD titlebar owns its top corners. The client surface still supplies
+  // the two bottom corners and all four corners in CSD mode.
+  const int top = toplevel->ssd == nullptr ? radius : 0;
+  backdrop_blur_renderer_->SetSurfaceRoundCorner(toplevel->Surface(),
+                                                 {top, top, radius, radius});
 }
 
 void CompositorPrivate::AttachSsd(Toplevel* toplevel) {
@@ -2266,8 +2275,8 @@ bool CompositorPrivate::AddWorkspace() {
 }
 
 bool CompositorPrivate::RemoveWorkspace(int workspace) {
-  if (workspace_count_ <= 1 || workspace < 0 ||
-      workspace >= workspace_count_) return false;
+  if (workspace_count_ <= 1 || workspace < 0 || workspace >= workspace_count_)
+    return false;
   --workspace_count_;
   for (const std::unique_ptr<Toplevel>& toplevel : toplevels_) {
     if (toplevel->workspace == workspace) {
@@ -2300,7 +2309,8 @@ bool CompositorPrivate::RemoveWorkspace(int workspace) {
 
 bool CompositorPrivate::ReorderWorkspace(int from, int to) {
   if (from < 0 || to < 0 || from >= workspace_count_ ||
-      to >= workspace_count_ || from == to) return false;
+      to >= workspace_count_ || from == to)
+    return false;
   const auto remap = [from, to](int index) {
     if (index == from) return to;
     if (from < to && index > from && index <= to) return index - 1;
@@ -2349,8 +2359,7 @@ void CompositorPrivate::SetAllWorkspaces(Toplevel* toplevel,
   }
 }
 
-bool CompositorPrivate::ShowWindowMenu(Toplevel* toplevel, double x,
-                                       double y) {
+bool CompositorPrivate::ShowWindowMenu(Toplevel* toplevel, double x, double y) {
   if (window_menu_ == nullptr || toplevel == nullptr || !toplevel->mapped ||
       !toplevel->IsAlive() || toplevel->Surface() == nullptr ||
       (protocol_manager_ != nullptr && protocol_manager_->SessionLocked())) {
@@ -2390,8 +2399,7 @@ void CompositorPrivate::HandleWindowMenuAction(
     }
     case view::WindowMenu::Action::kResize: {
       const wlr_box frame = toplevel->FrameGeometry();
-      const double x =
-          toplevel->scene_tree->node.x + frame.x + frame.width + 8;
+      const double x = toplevel->scene_tree->node.x + frame.x + frame.width + 8;
       const double y =
           toplevel->scene_tree->node.y + frame.y + frame.height + 8;
       wlr_cursor_warp_closest(cursor_, nullptr, x, y);
@@ -2408,8 +2416,7 @@ void CompositorPrivate::HandleWindowMenuAction(
       break;
     case view::WindowMenu::Action::kMoveWorkspaceLeft:
       SetAllWorkspaces(toplevel, false);
-      MoveToplevelToWorkspace(toplevel,
-                              std::max(0, toplevel->workspace - 1));
+      MoveToplevelToWorkspace(toplevel, std::max(0, toplevel->workspace - 1));
       break;
     case view::WindowMenu::Action::kMoveWorkspaceRight:
       SetAllWorkspaces(toplevel, false);
@@ -2647,10 +2654,7 @@ void CompositorPrivate::SetMaximized(Toplevel* toplevel, bool maximized) {
   if (toplevel->ssd != nullptr) {
     toplevel->ssd->SetMaximized(maximized);
   }
-  if (toplevel->ssd_clip != nullptr) {
-    toplevel->ssd_clip->Update(toplevel->Geometry(),
-                               maximized || toplevel->tiled);
-  }
+  RebuildSurfaceClip(toplevel);
 
   if (maximized) {
     // Maximize onto the usable area of the output under the pointer.
@@ -2692,8 +2696,8 @@ void CompositorPrivate::ToggleMaximized(Toplevel* toplevel) {
   }
 }
 
-void CompositorPrivate::TileToplevel(
-    Toplevel* toplevel, view::SplitScreenSwitcher::Tile tile) {
+void CompositorPrivate::TileToplevel(Toplevel* toplevel,
+                                     view::SplitScreenSwitcher::Tile tile) {
   if (toplevel == nullptr || !toplevel->mapped || !toplevel->IsAlive() ||
       !toplevel->CanManage() || toplevel->scene_tree == nullptr) {
     return;
@@ -2772,9 +2776,7 @@ void CompositorPrivate::TileToplevel(
     toplevel->ssd->SetMaximized(false);
     toplevel->ssd->SetTiled(true);
   }
-  if (toplevel->ssd_clip != nullptr) {
-    toplevel->ssd_clip->Update(toplevel->Geometry(), true);
-  }
+  RebuildSurfaceClip(toplevel);
   if (toplevel->handle != nullptr) {
     wlr_xdg_toplevel_set_tiled(
         toplevel->handle,
@@ -2977,8 +2979,7 @@ void CompositorPrivate::BeginInteractive(Toplevel* toplevel, CursorMode mode,
   if (tile_animation_ != nullptr) tile_animation_->Cancel();
 
   // Normalize a maximized or tiled window before it starts moving.
-  if (mode == CursorMode::kMove &&
-      (toplevel->maximized || toplevel->tiled)) {
+  if (mode == CursorMode::kMove && (toplevel->maximized || toplevel->tiled)) {
     RestoreForMove(toplevel);
   }
 
@@ -3135,17 +3136,16 @@ void CompositorPrivate::ProcessCursorMotion(uint32_t time_msec) {
     if (split_screen_switcher_ != nullptr) {
       split_screen_switcher_->LeaveMaximize();
     }
-    view::TitlebarTooltip::Hint hint =
-        view::TitlebarTooltip::Hint::kNone;
+    view::TitlebarTooltip::Hint hint = view::TitlebarTooltip::Hint::kNone;
     if (ssd_hit.part == view::Ssd::Part::kMinimize) {
       hint = view::TitlebarTooltip::Hint::kMinimize;
     } else if (ssd_hit.part == view::Ssd::Part::kClose) {
       hint = view::TitlebarTooltip::Hint::kClose;
     }
     if (titlebar_tooltip_ != nullptr) {
-      titlebar_tooltip_->Hover(toplevel == nullptr ? nullptr
-                                                  : toplevel->Surface(),
-                               hint, cursor_->x, cursor_->y);
+      titlebar_tooltip_->Hover(
+          toplevel == nullptr ? nullptr : toplevel->Surface(), hint, cursor_->x,
+          cursor_->y);
     }
   }
   if (ssd_hit.part != view::Ssd::Part::kNone) {
@@ -3244,7 +3244,7 @@ void CompositorPrivate::OnCursorButton(CompositorPrivate* compositor,
   }
   if (compositor->split_screen_switcher_ != nullptr &&
       compositor->split_screen_switcher_->HandleButton(event->button,
-                                                        event->state)) {
+                                                       event->state)) {
     return;
   }
   if (compositor->multitasking_ != nullptr &&
@@ -3255,8 +3255,7 @@ void CompositorPrivate::OnCursorButton(CompositorPrivate* compositor,
     return;
   }
   if (compositor->window_previews_ != nullptr &&
-      compositor->window_previews_->HandleButton(event->button,
-                                                 event->state)) {
+      compositor->window_previews_->HandleButton(event->button, event->state)) {
     if (!compositor->window_previews_->IsActive()) {
       compositor->ProcessCursorMotion(event->time_msec);
     }
@@ -3500,8 +3499,8 @@ void CompositorPrivate::OnTouchDown(CompositorPrivate* compositor,
       compositor->window_previews_->IsActive()) {
     compositor->window_previews_->HandleMotion(compositor->cursor_->x,
                                                compositor->cursor_->y);
-    compositor->window_previews_->HandleButton(
-        BTN_LEFT, WL_POINTER_BUTTON_STATE_PRESSED);
+    compositor->window_previews_->HandleButton(BTN_LEFT,
+                                               WL_POINTER_BUTTON_STATE_PRESSED);
     compositor->touch_points_.push_back({
         .touch = event->touch,
         .touch_id = event->touch_id,
@@ -3902,6 +3901,10 @@ void CompositorPrivate::OnNewPopup(CompositorPrivate* compositor,
 
   // Insert this popup as a child into its parent scene tree.
   handle->base->data = popup->scene_tree;
+  // GXWM applies a compositor-owned radius to Qt/DTK xdg_popup surfaces even
+  // when the client only requests blur. Keep this independent from the parent
+  // toplevel so an in-process menu receives the same mask as its blur.
+  compositor->SetSurfaceRoundCorner(handle->base->surface, 8);
   popup->commit.Connect(&handle->base->surface->events.commit);
   popup->destroy.Connect(&handle->events.destroy);
   compositor->popups_.push_back(std::move(popup));
@@ -4077,8 +4080,8 @@ bool CompositorPrivate::RegisterDefaultKeyBindings() {
          register_binding(
              "Alt+F3:no", input::KeyBindingType::kWindowMenu,
              [this]() {
-               Toplevel* toplevel = ToplevelForSurface(
-                   seat_->keyboard_state.focused_surface);
+               Toplevel* toplevel =
+                   ToplevelForSurface(seat_->keyboard_state.focused_surface);
                if (toplevel == nullptr || toplevel->scene_tree == nullptr) {
                  return;
                }

@@ -176,6 +176,7 @@ void XSurface::OnAssociate(XSurface* surface, void*) {
   surface->scene_tree->node.data = surface;
   wlr_scene_node_set_position(&surface->scene_tree->node, surface->handle->x,
                               surface->handle->y);
+  surface->compositor->RebuildSurfaceClip(surface);
   surface->map.Connect(&surface->handle->surface->events.map);
   surface->unmap.Connect(&surface->handle->surface->events.unmap);
   surface->commit.Connect(&surface->handle->surface->events.commit);
@@ -186,6 +187,9 @@ void XSurface::OnAssociate(XSurface* surface, void*) {
 }
 
 void XSurface::Dissociate() {
+  if (handle != nullptr && handle->surface != nullptr) {
+    compositor->ClearSurfaceRoundCorner(handle->surface);
+  }
   if (mapped) {
     Toplevel::OnUnmap(this, nullptr);
   }

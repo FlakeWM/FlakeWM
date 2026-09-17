@@ -22,6 +22,7 @@
 #ifndef SRC_RENDER_BACKDROP_BLUR_RENDERER_H_
 #define SRC_RENDER_BACKDROP_BLUR_RENDERER_H_
 
+#include <array>
 #include <memory>
 
 #include "src/wlr_wrapper/wlroots.h"
@@ -49,6 +50,12 @@ class BackdropBlurRenderer final {
   void SetSurfaceBlur(wlr_surface* surface, const pixman_region32_t* region,
                       float offset);
   void ClearSurfaceBlur(wlr_surface* surface);
+  // Radius order: top-left, top-right, bottom-right, bottom-left.  The
+  // compositor supplies logical surface pixels; the renderer scales them to
+  // the destination buffer and uses the same mask for content and blur.
+  void SetSurfaceRoundCorner(wlr_surface* surface,
+                             const std::array<int, 4>& radii);
+  void ClearSurfaceRoundCorner(wlr_surface* surface);
   void SetTextureBlur(const void* owner, wlr_texture* texture,
                       const pixman_region32_t* region, float offset);
   void ClearTextureBlur(const void* owner);

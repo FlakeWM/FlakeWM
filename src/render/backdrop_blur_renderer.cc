@@ -36,6 +36,7 @@ extern "C" {
 }
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -47,6 +48,7 @@ extern "C" {
 #include "absl/log/absl_log.h"
 #include "src/render/backdrop_blur_renderer.h"
 #include "src/render/vulkan_blur_pipeline.h"
+#include "src/utils/signal_listener.h"
 
 namespace flakewm {
 namespace render {
@@ -79,6 +81,22 @@ void main() {
   gl_FragColor = color;
 }
 )";
+
+constexpr int kCoverageSamples = 4;
+constexpr int kCoverageLevels = kCoverageSamples * kCoverageSamples;
+
+float CornerCoverage(int radius, int x, int y) {
+  if (radius <= 0 || x >= radius || y >= radius) return 1.0F;
+  int inside = 0;
+  for (int sample_y = 0; sample_y < kCoverageSamples; ++sample_y) {
+    const double py = y + (sample_y + 0.5) / kCoverageSamples - radius;
+    for (int sample_x = 0; sample_x < kCoverageSamples; ++sample_x) {
+      const double px = x + (sample_x + 0.5) / kCoverageSamples - radius;
+      if (px * px + py * py <= radius * radius) ++inside;
+    }
+  }
+  return static_cast<float>(inside) / kCoverageLevels;
+}
 
 GLuint CompileShader(GLenum type, const char* source) {
   const GLuint shader = glCreateShader(type);
@@ -168,6 +186,40 @@ class BackdropBlurRenderer::Impl {
     float offset;
   };
 
+  struct SurfaceRoundCorner {
+    SurfaceRoundCorner(wlr_surface* new_surface,
+                       const std::array<int, 4>& new_radii)
+        : surface(new_surface), radii(new_radii), destroy(this, OnDestroy) {
+      destroy.Connect(&surface->events.destroy);
+    }
+
+    static void OnDestroy(SurfaceRoundCorner* round, void*) {
+      round->destroy.Disconnect();
+      round->surface = nullptr;
+    }
+
+    wlr_surface* surface;
+    std::array<int, 4> radii;
+    utils::SignalListener<SurfaceRoundCorner, void> destroy;
+  };
+
+  struct RoundedRegions {
+    RoundedRegions() {
+      pixman_region32_init(&opaque);
+      for (pixman_region32_t& region : partial) pixman_region32_init(&region);
+    }
+    ~RoundedRegions() {
+      pixman_region32_fini(&opaque);
+      for (pixman_region32_t& region : partial) pixman_region32_fini(&region);
+    }
+
+    RoundedRegions(const RoundedRegions&) = delete;
+    RoundedRegions& operator=(const RoundedRegions&) = delete;
+
+    pixman_region32_t opaque;
+    std::array<pixman_region32_t, kCoverageLevels - 1> partial;
+  };
+
   struct RenderPass {
     wlr_render_pass base;
     Impl* renderer;
@@ -220,6 +272,32 @@ class BackdropBlurRenderer::Impl {
   void ClearSurfaceBlur(wlr_surface* surface) {
     std::erase_if(surfaces, [surface](const auto& item) {
       return item->surface == surface;
+    });
+  }
+
+  void SetSurfaceRoundCorner(wlr_surface* surface,
+                             const std::array<int, 4>& radii) {
+    std::erase_if(round_corners,
+                  [](const auto& item) { return item->surface == nullptr; });
+    auto found = std::find_if(
+        round_corners.begin(), round_corners.end(),
+        [surface](const auto& item) { return item->surface == surface; });
+    if (std::all_of(radii.begin(), radii.end(),
+                    [](int radius) { return radius <= 0; })) {
+      if (found != round_corners.end()) round_corners.erase(found);
+      return;
+    }
+    if (found == round_corners.end()) {
+      round_corners.push_back(
+          std::make_unique<SurfaceRoundCorner>(surface, radii));
+    } else {
+      (*found)->radii = radii;
+    }
+  }
+
+  void ClearSurfaceRoundCorner(wlr_surface* surface) {
+    std::erase_if(round_corners, [surface](const auto& item) {
+      return item->surface == nullptr || item->surface == surface;
     });
   }
 
@@ -348,16 +426,23 @@ class BackdropBlurRenderer::Impl {
     if (self->failed || self->inner == nullptr) {
       return;
     }
-    const bool force_blending = self->renderer->ApplySurfaceBlur(self, options);
-    if (!self->failed && self->inner != nullptr) {
-      if (force_blending) {
-        wlr_render_texture_options blended = *options;
-        blended.blend_mode = WLR_RENDER_BLEND_MODE_PREMULTIPLIED;
-        wlr_render_pass_add_texture(self->inner, &blended);
-      } else {
-        wlr_render_pass_add_texture(self->inner, options);
+    const SurfaceRoundCorner* round = self->renderer->RoundCornerFor(options);
+    if (round == nullptr) {
+      const bool force_blending =
+          self->renderer->ApplySurfaceBlur(self, options);
+      if (!self->failed && self->inner != nullptr) {
+        if (force_blending) {
+          wlr_render_texture_options blended = *options;
+          blended.blend_mode = WLR_RENDER_BLEND_MODE_PREMULTIPLIED;
+          wlr_render_pass_add_texture(self->inner, &blended);
+        } else {
+          wlr_render_pass_add_texture(self->inner, options);
+        }
       }
+      return;
     }
+
+    self->renderer->AddRoundedSurfaceTexture(self, options, *round);
   }
 
   static void AddRect(wlr_render_pass* pass,
@@ -377,6 +462,137 @@ class BackdropBlurRenderer::Impl {
       wlr_drm_syncobj_timeline_unref(pass->final_options.signal_timeline);
       pass->final_options.signal_timeline = nullptr;
     }
+  }
+
+  const SurfaceRoundCorner* RoundCornerFor(
+      const wlr_render_texture_options* options) const {
+    auto found = std::find_if(round_corners.begin(), round_corners.end(),
+                              [options](const auto& item) {
+                                return item->surface != nullptr &&
+                                       wlr_surface_get_texture(item->surface) ==
+                                           options->texture;
+                              });
+    return found == round_corners.end() ? nullptr : found->get();
+  }
+
+  static void IntersectClip(pixman_region32_t* region,
+                            const pixman_region32_t* clip) {
+    if (clip != nullptr) pixman_region32_intersect(region, region, clip);
+  }
+
+  static std::array<int, 4> ScaledRadii(const SurfaceRoundCorner& round,
+                                        const wlr_box& destination) {
+    const int surface_width = std::max(round.surface->current.width, 1);
+    const int surface_height = std::max(round.surface->current.height, 1);
+    const double scale =
+        std::min(static_cast<double>(destination.width) / surface_width,
+                 static_cast<double>(destination.height) / surface_height);
+    std::array<int, 4> result = {};
+    const int limit =
+        std::max(0, std::min(destination.width, destination.height) / 2);
+    for (size_t i = 0; i < result.size(); ++i) {
+      result[i] = std::clamp(
+          static_cast<int>(std::lround(round.radii[i] * scale)), 0, limit);
+    }
+    return result;
+  }
+
+  static void BuildRoundedRegions(const wlr_box& destination,
+                                  const std::array<int, 4>& radii,
+                                  const pixman_region32_t* clip,
+                                  RoundedRegions* regions) {
+    if (destination.width <= 0 || destination.height <= 0) return;
+
+    for (int row = 0; row < destination.height; ++row) {
+      const bool top = row < std::max(radii[0], radii[1]);
+      const bool bottom =
+          destination.height - row - 1 < std::max(radii[3], radii[2]);
+      const int left_radius = top ? radii[0] : (bottom ? radii[3] : 0);
+      const int right_radius = top ? radii[1] : (bottom ? radii[2] : 0);
+      const int corner_y = top ? row : destination.height - row - 1;
+
+      int left_opaque = 0;
+      for (int x = 0; x < left_radius; ++x) {
+        const float coverage = CornerCoverage(left_radius, x, corner_y);
+        const int level = std::clamp(
+            static_cast<int>(std::lround(coverage * kCoverageLevels)), 0,
+            kCoverageLevels);
+        if (level == kCoverageLevels) {
+          left_opaque = x;
+          break;
+        }
+        left_opaque = x + 1;
+        if (level > 0) {
+          pixman_region32_union_rect(
+              &regions->partial[level - 1], &regions->partial[level - 1],
+              destination.x + x, destination.y + row, 1, 1);
+        }
+      }
+
+      int right_opaque = 0;
+      for (int x = 0; x < right_radius; ++x) {
+        const float coverage = CornerCoverage(right_radius, x, corner_y);
+        const int level = std::clamp(
+            static_cast<int>(std::lround(coverage * kCoverageLevels)), 0,
+            kCoverageLevels);
+        if (level == kCoverageLevels) {
+          right_opaque = x;
+          break;
+        }
+        right_opaque = x + 1;
+        if (level > 0) {
+          pixman_region32_union_rect(&regions->partial[level - 1],
+                                     &regions->partial[level - 1],
+                                     destination.x + destination.width - x - 1,
+                                     destination.y + row, 1, 1);
+        }
+      }
+
+      const int width = destination.width - left_opaque - right_opaque;
+      if (width > 0) {
+        pixman_region32_union_rect(&regions->opaque, &regions->opaque,
+                                   destination.x + left_opaque,
+                                   destination.y + row, width, 1);
+      }
+    }
+
+    IntersectClip(&regions->opaque, clip);
+    for (pixman_region32_t& region : regions->partial) {
+      IntersectClip(&region, clip);
+    }
+  }
+
+  void AddRoundedSurfaceTexture(RenderPass* pass,
+                                const wlr_render_texture_options* options,
+                                const SurfaceRoundCorner& round) {
+    wlr_box destination = {};
+    wlr_render_texture_options_get_dst_box(options, &destination);
+    RoundedRegions regions;
+    BuildRoundedRegions(destination, ScaledRadii(round, destination),
+                        options->clip, &regions);
+
+    wlr_render_texture_options rounded = *options;
+    rounded.clip = &regions.opaque;
+    const bool force_blending = ApplySurfaceBlur(pass, &rounded);
+    if (pass->failed || pass->inner == nullptr) return;
+
+    rounded.blend_mode = WLR_RENDER_BLEND_MODE_PREMULTIPLIED;
+    if (!pixman_region32_empty(&regions.opaque)) {
+      wlr_render_pass_add_texture(pass->inner, &rounded);
+    }
+
+    const float original_alpha = wlr_render_texture_options_get_alpha(options);
+    for (size_t i = 0; i < regions.partial.size(); ++i) {
+      if (pixman_region32_empty(&regions.partial[i])) continue;
+      const float alpha =
+          original_alpha * static_cast<float>(i + 1) / kCoverageLevels;
+      rounded.alpha = &alpha;
+      rounded.clip = &regions.partial[i];
+      // A rounded edge always needs blending, including RGBX/opaque buffers.
+      rounded.blend_mode = WLR_RENDER_BLEND_MODE_PREMULTIPLIED;
+      wlr_render_pass_add_texture(pass->inner, &rounded);
+    }
+    (void)force_blending;
   }
 
   bool EnsureGlResources(int width, int height) {
@@ -718,6 +934,7 @@ class BackdropBlurRenderer::Impl {
   wlr_renderer* inner = nullptr;
   std::unique_ptr<VulkanBlurPipeline> vulkan_blur;
   std::vector<std::unique_ptr<SurfaceBlur>> surfaces;
+  std::vector<std::unique_ptr<SurfaceRoundCorner>> round_corners;
   std::vector<std::unique_ptr<TextureBlur>> textures_blur;
   GLuint program = 0;
   GLint image_uniform = -1;
@@ -787,6 +1004,15 @@ void BackdropBlurRenderer::SetSurfaceBlur(wlr_surface* surface,
 
 void BackdropBlurRenderer::ClearSurfaceBlur(wlr_surface* surface) {
   impl_->ClearSurfaceBlur(surface);
+}
+
+void BackdropBlurRenderer::SetSurfaceRoundCorner(
+    wlr_surface* surface, const std::array<int, 4>& radii) {
+  if (surface != nullptr) impl_->SetSurfaceRoundCorner(surface, radii);
+}
+
+void BackdropBlurRenderer::ClearSurfaceRoundCorner(wlr_surface* surface) {
+  if (surface != nullptr) impl_->ClearSurfaceRoundCorner(surface);
 }
 
 void BackdropBlurRenderer::SetTextureBlur(const void* owner,
