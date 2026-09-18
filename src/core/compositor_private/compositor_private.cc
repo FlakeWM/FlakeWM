@@ -2084,9 +2084,10 @@ void CompositorPrivate::SetCsdShadow(Toplevel* toplevel, bool enabled) {
   if (toplevel == nullptr) {
     return;
   }
-  if (toplevel->csd_shadow_enabled == enabled) {
+  if (toplevel->csd_shadow_set && toplevel->csd_shadow_enabled == enabled) {
     return;
   }
+  toplevel->csd_shadow_set = true;
   toplevel->csd_shadow_enabled = enabled;
   UpdateCsdShadow(toplevel);
 }
@@ -2098,12 +2099,18 @@ void CompositorPrivate::UpdateCsdShadow(Toplevel* toplevel) {
   const bool active =
       toplevel->Surface() != nullptr &&
       seat_->keyboard_state.focused_surface == toplevel->Surface();
-  // A CSD window only gets a compositor-drawn shadow while it is mapped, not
-  // maximized/tiled/fullscreen, and carries no server-side decoration.
-  const bool want_shadow = toplevel->csd_shadow_enabled &&
-                           toplevel->mapped && toplevel->ssd == nullptr &&
-                           !toplevel->maximized && !toplevel->tiled &&
-                           !toplevel->RequestedFullscreen();
+  // A CSD window gets a shadow by default. Only an explicit client request can
+  // turn it off: dde_shell's EffectNoShadow, or personalization's set_shadow
+  // with radius 0. Clients that never ask (DTK5/DTK6 delegate entirely to the
+  // compositor) inherit the default from their own no-titlebar declaration.
+  const bool wanted = toplevel->csd_shadow_set
+                          ? toplevel->csd_shadow_enabled
+                          : HasNoTitlebarSurface(toplevel->Surface());
+  // It is only drawn while the window is mapped, not maximized/tiled/
+  // fullscreen, and carries no server-side decoration.
+  const bool want_shadow = wanted && toplevel->mapped &&
+                           toplevel->ssd == nullptr && !toplevel->maximized &&
+                           !toplevel->tiled && !toplevel->RequestedFullscreen();
   if (!want_shadow || toplevel->scene_tree == nullptr) {
     toplevel->csd_shadow.reset();
     return;

@@ -261,6 +261,7 @@ class CompositorPrivate final {
     // Client-side-decorated windows (DTK) may ask the compositor to draw their
     // shadow. This lives independently from the SSD shadow above.
     std::unique_ptr<view::SsdShadow> csd_shadow;
+    bool csd_shadow_set = false;
     bool csd_shadow_enabled = false;
     utils::SignalListener<Toplevel, void> map{this, OnMap};
     utils::SignalListener<Toplevel, void> unmap{this, OnUnmap};
