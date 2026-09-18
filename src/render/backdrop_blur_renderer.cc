@@ -567,9 +567,9 @@ class BackdropBlurRenderer::Impl {
                                 const SurfaceRoundCorner& round) {
     wlr_box destination = {};
     wlr_render_texture_options_get_dst_box(options, &destination);
+    const std::array<int, 4> scaled = ScaledRadii(round, destination);
     RoundedRegions regions;
-    BuildRoundedRegions(destination, ScaledRadii(round, destination),
-                        options->clip, &regions);
+    BuildRoundedRegions(destination, scaled, options->clip, &regions);
 
     wlr_render_texture_options rounded = *options;
     rounded.clip = &regions.opaque;
@@ -988,6 +988,10 @@ bool BackdropBlurRenderer::IsSupported() const { return impl_->IsSupported(); }
 
 bool BackdropBlurRenderer::HasActiveBlur() const {
   return !impl_->surfaces.empty() || !impl_->textures_blur.empty();
+}
+
+bool BackdropBlurRenderer::HasRoundedCorners() const {
+  return !impl_->round_corners.empty();
 }
 
 void BackdropBlurRenderer::SetAllocator(wlr_allocator* allocator) {

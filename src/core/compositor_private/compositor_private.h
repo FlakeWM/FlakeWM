@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "src/backend/backend/backend.h"
@@ -40,6 +41,7 @@
 #include "src/view/ssd/split_screen_switcher/split_screen_switcher.h"
 #include "src/view/ssd/split_screen_switcher/tile_animation.h"
 #include "src/view/ssd/ssd/ssd.h"
+#include "src/view/ssd/ssd_shadow/ssd_shadow.h"
 #include "src/view/ssd/ssd_surface_clip/ssd_surface_clip.h"
 #include "src/view/ssd/titlebar_tooltip/titlebar_tooltip.h"
 #include "src/view/ssd/window_menu/window_menu.h"
@@ -256,6 +258,10 @@ class CompositorPrivate final {
     std::unique_ptr<view::Ssd> ssd;
     std::unique_ptr<view::SsdSurfaceClip> ssd_clip;
     bool ssd_initial_position_pending = false;
+    // Client-side-decorated windows (DTK) may ask the compositor to draw their
+    // shadow. This lives independently from the SSD shadow above.
+    std::unique_ptr<view::SsdShadow> csd_shadow;
+    bool csd_shadow_enabled = false;
     utils::SignalListener<Toplevel, void> map{this, OnMap};
     utils::SignalListener<Toplevel, void> unmap{this, OnUnmap};
     utils::SignalListener<Toplevel, void> commit{this, OnCommit};
@@ -307,8 +313,14 @@ class CompositorPrivate final {
   Toplevel* ToplevelForSurface(wlr_surface* surface) const;
   bool HasXdgDecoration(wlr_surface* surface) const;
   bool SsdEnabledForSurface(wlr_surface* surface) const;
+  // Tracks dde_shell "no titlebar" requests so an xdg-decoration arriving after
+  // the request does not briefly attach a server-side titlebar (CSD clients).
+  void SetNoTitlebarSurface(wlr_surface* surface, bool no_titlebar);
+  bool HasNoTitlebarSurface(wlr_surface* surface) const;
   void SetSsdEnabled(Toplevel* toplevel, bool enabled);
   void SetRoundCorner(Toplevel* toplevel, int radius);
+  void SetCsdShadow(Toplevel* toplevel, bool enabled);
+  void UpdateCsdShadow(Toplevel* toplevel);
   void SetSurfaceRoundCorner(wlr_surface* surface, int radius);
   void ClearSurfaceRoundCorner(wlr_surface* surface);
   void RebuildSurfaceClip(Toplevel* toplevel);
@@ -391,6 +403,7 @@ class CompositorPrivate final {
       const utils::StartupArgs& startup_args) const;
   bool RegisterDefaultKeyBindings();
   void UpdateBackdropBlurState();
+  void RefreshRoundedCornerState();
   void DamageOutputForBackdropBlur(Output* output, bool schedule_frame);
   void UpdateQtFrameInterval();
   bool Spawn(const std::string& command) const;
@@ -412,6 +425,7 @@ class CompositorPrivate final {
   wlr_scene* scene_ = nullptr;
   bool scene_direct_scanout_default_ = true;
   bool scene_calculate_visibility_default_ = true;
+  bool scene_rounded_corners_active_ = false;
   wlr_scene_output_layout* scene_layout_ = nullptr;
   wlr_xdg_shell* xdg_shell_ = nullptr;
   wlr_xdg_decoration_manager_v1* xdg_decoration_manager_ = nullptr;
@@ -492,6 +506,7 @@ class CompositorPrivate final {
   std::vector<TouchPoint> touch_points_;
   std::vector<std::unique_ptr<XdgDecoration>> xdg_decorations_;
   std::vector<std::unique_ptr<Toplevel>> toplevels_;
+  std::unordered_set<wlr_surface*> no_titlebar_surfaces_;
   std::vector<std::unique_ptr<LayerSurface>> layer_surfaces_;
   std::vector<std::unique_ptr<Popup>> popups_;
   static constexpr int kInitialWorkspaceCount = 4;

@@ -76,6 +76,7 @@ class TreelandProtocolManagerImpl final {
   void SplitSurface(wlr_surface* surface, bool left) const;
   void SetTitlebar(wlr_surface* surface, bool enabled) const;
   void SetRoundCorner(wlr_surface* surface, int radius) const;
+  void SetShadow(wlr_surface* surface, bool enabled) const;
   void SetBlur(wlr_surface* surface, bool enabled) const;
   bool SurfaceGeometry(wlr_surface* surface, wlr_box* geometry) const;
 

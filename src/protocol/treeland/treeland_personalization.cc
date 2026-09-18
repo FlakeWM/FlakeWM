@@ -128,6 +128,8 @@ class PersonalizationGlobal final : public TreelandGlobal {
         TREELAND_PERSONALIZATION_WINDOW_CONTEXT_V1_BLEND_MODE_TRANSPARENT;
     int32_t radius = -1;
     int32_t titlebar = -1;
+    bool shadow_enabled = false;
+    bool shadow_set = false;
     utils::SignalListener<WindowContext, void> map{this, OnMap};
     utils::SignalListener<WindowContext, void> commit{this, OnCommit};
     utils::SignalListener<WindowContext, void> destroy{this, OnSurfaceDestroy};
@@ -156,6 +158,9 @@ class PersonalizationGlobal final : public TreelandGlobal {
       if (radius >= 0) {
         global->owner_->SetRoundCorner(
             surface, radius > 0 ? radius : global->owner_->round_corner_radius);
+      }
+      if (shadow_set) {
+        global->owner_->SetShadow(surface, shadow_enabled);
       }
     }
   };
@@ -302,8 +307,24 @@ class PersonalizationGlobal final : public TreelandGlobal {
     context->Apply();
   }
 
-  static void SetShadow(wl_client*, wl_resource*, int32_t, int32_t, int32_t,
-                        int32_t, int32_t, int32_t, int32_t) {}
+  static void SetShadow(wl_client*, wl_resource* resource, int32_t radius,
+                        int32_t offset_x, int32_t offset_y, int32_t r,
+                        int32_t g, int32_t b, int32_t a) {
+    auto* context =
+        static_cast<WindowContext*>(wl_resource_get_user_data(resource));
+    (void)offset_x;
+    (void)offset_y;
+    (void)r;
+    (void)g;
+    (void)b;
+    (void)a;
+
+    // radius == 0 disables the shadow
+    // -1 (default) and >0 both enable the Chameleon shadow.
+    context->shadow_set = true;
+    context->shadow_enabled = radius != 0;
+    context->Apply();
+  }
   static void SetBorder(wl_client*, wl_resource*, int32_t, int32_t, int32_t,
                         int32_t, int32_t) {}
 

@@ -941,13 +941,31 @@ void CompositorPrivate::UpdateBackdropBlurState() {
   }
   const bool active = backdrop_blur_renderer_ != nullptr &&
                       backdrop_blur_renderer_->HasActiveBlur();
+  // Rounded corners are cut out at draw time, but the scene graph still treats
+  // the whole surface as opaque.
+  const bool rounded = backdrop_blur_renderer_ != nullptr &&
+                       backdrop_blur_renderer_->HasRoundedCorners();
   scene_->WLR_PRIVATE.direct_scanout =
       active ? false : scene_direct_scanout_default_;
   scene_->WLR_PRIVATE.calculate_visibility =
-      active ? false : scene_calculate_visibility_default_;
+      (active || rounded) ? false : scene_calculate_visibility_default_;
   for (const std::unique_ptr<Output>& output : outputs_) {
     DamageOutputForBackdropBlur(output.get(), true);
   }
+}
+
+void CompositorPrivate::RefreshRoundedCornerState() {
+  if (scene_ == nullptr || backdrop_blur_renderer_ == nullptr) {
+    return;
+  }
+  // Only re-run the (damaging) state update when a mask actually appears or
+  // disappears; RebuildSurfaceClip runs on every geometry change.
+  const bool rounded = backdrop_blur_renderer_->HasRoundedCorners();
+  if (rounded == scene_rounded_corners_active_) {
+    return;
+  }
+  scene_rounded_corners_active_ = rounded;
+  UpdateBackdropBlurState();
 }
 
 CompositorPrivate::Output::Output(CompositorPrivate* compositor,
@@ -1486,6 +1504,7 @@ void CompositorPrivate::Toplevel::OnUnmap(Toplevel* toplevel, void*) {
     toplevel->compositor->pending_window_menu_ = nullptr;
   }
   toplevel->mapped = false;
+  toplevel->compositor->UpdateCsdShadow(toplevel);
   if (toplevel->compositor->protocol_manager_ != nullptr) {
     toplevel->compositor->protocol_manager_->UnmapToplevel(toplevel->Surface());
   }
@@ -1511,6 +1530,7 @@ void CompositorPrivate::Toplevel::OnCommit(Toplevel* toplevel, void*) {
   if (toplevel->handle == nullptr) {
     return;
   }
+  toplevel->compositor->UpdateCsdShadow(toplevel);
 
   toplevel->UpdateCapabilities();
 
@@ -1583,6 +1603,7 @@ void CompositorPrivate::Toplevel::OnRequestFullscreen(Toplevel* toplevel,
                                                       void*) {
   toplevel->SetFullscreenState(toplevel->RequestedFullscreen());
   toplevel->compositor->RebuildSurfaceClip(toplevel);
+  toplevel->compositor->UpdateCsdShadow(toplevel);
   if (toplevel->compositor->protocol_manager_ != nullptr) {
     toplevel->compositor->protocol_manager_->UpdateToplevel(
         toplevel->Surface());
@@ -1639,6 +1660,7 @@ void CompositorPrivate::Toplevel::OnSetParent(Toplevel* toplevel, void*) {
   if (toplevel->ssd != nullptr && toplevel->handle != nullptr) {
     toplevel->ssd->SetDialog(toplevel->handle->parent != nullptr);
   }
+  toplevel->compositor->UpdateCsdShadow(toplevel);
   if (toplevel->maximized && !toplevel->CanMaximize()) {
     toplevel->compositor->SetMaximized(toplevel, false);
   }
@@ -1691,6 +1713,7 @@ void CompositorPrivate::Toplevel::OnDestroy(Toplevel* toplevel, void*) {
     toplevel->compositor->ResetCursorMode();
   }
   toplevel->compositor->ClearSurfaceRoundCorner(toplevel->Surface());
+  toplevel->compositor->no_titlebar_surfaces_.erase(toplevel->Surface());
   toplevel->map.Disconnect();
   toplevel->unmap.Disconnect();
   toplevel->commit.Disconnect();
@@ -1706,6 +1729,7 @@ void CompositorPrivate::Toplevel::OnDestroy(Toplevel* toplevel, void*) {
   toplevel->set_parent.Disconnect();
   toplevel->ssd.reset();
   toplevel->ssd_clip.reset();
+  toplevel->csd_shadow.reset();
   toplevel->handle = nullptr;
   toplevel->scene_tree = nullptr;
   toplevel->mapped = false;
@@ -1979,11 +2003,28 @@ bool CompositorPrivate::SsdEnabledForSurface(wlr_surface* surface) const {
   return toplevel != nullptr && toplevel->ssd != nullptr;
 }
 
+void CompositorPrivate::SetNoTitlebarSurface(wlr_surface* surface,
+                                             bool no_titlebar) {
+  if (surface == nullptr) {
+    return;
+  }
+  if (no_titlebar) {
+    no_titlebar_surfaces_.insert(surface);
+  } else {
+    no_titlebar_surfaces_.erase(surface);
+  }
+}
+
+bool CompositorPrivate::HasNoTitlebarSurface(wlr_surface* surface) const {
+  return surface != nullptr && no_titlebar_surfaces_.count(surface) != 0;
+}
+
 void CompositorPrivate::SetSsdEnabled(Toplevel* toplevel, bool enabled) {
   if (toplevel == nullptr) {
     return;
   }
   if (enabled) {
+    toplevel->csd_shadow.reset();
     AttachSsd(toplevel);
     return;
   }
@@ -1991,6 +2032,7 @@ void CompositorPrivate::SetSsdEnabled(Toplevel* toplevel, bool enabled) {
   toplevel->ssd.reset();
   toplevel->ssd_initial_position_pending = false;
   RebuildSurfaceClip(toplevel);
+  UpdateCsdShadow(toplevel);
 }
 
 void CompositorPrivate::SetRoundCorner(Toplevel* toplevel, int radius) {
@@ -2007,11 +2049,13 @@ void CompositorPrivate::SetSurfaceRoundCorner(wlr_surface* surface,
   radius = std::clamp(radius, 0, 64);
   backdrop_blur_renderer_->SetSurfaceRoundCorner(
       surface, {radius, radius, radius, radius});
+  RefreshRoundedCornerState();
 }
 
 void CompositorPrivate::ClearSurfaceRoundCorner(wlr_surface* surface) {
   if (surface != nullptr && backdrop_blur_renderer_ != nullptr) {
     backdrop_blur_renderer_->ClearSurfaceRoundCorner(surface);
+    RefreshRoundedCornerState();
   }
 }
 
@@ -2033,6 +2077,49 @@ void CompositorPrivate::RebuildSurfaceClip(Toplevel* toplevel) {
   const int top = toplevel->ssd == nullptr ? radius : 0;
   backdrop_blur_renderer_->SetSurfaceRoundCorner(toplevel->Surface(),
                                                  {top, top, radius, radius});
+  RefreshRoundedCornerState();
+}
+
+void CompositorPrivate::SetCsdShadow(Toplevel* toplevel, bool enabled) {
+  if (toplevel == nullptr) {
+    return;
+  }
+  if (toplevel->csd_shadow_enabled == enabled) {
+    return;
+  }
+  toplevel->csd_shadow_enabled = enabled;
+  UpdateCsdShadow(toplevel);
+}
+
+void CompositorPrivate::UpdateCsdShadow(Toplevel* toplevel) {
+  if (toplevel == nullptr) {
+    return;
+  }
+  const bool active =
+      toplevel->Surface() != nullptr &&
+      seat_->keyboard_state.focused_surface == toplevel->Surface();
+  // A CSD window only gets a compositor-drawn shadow while it is mapped, not
+  // maximized/tiled/fullscreen, and carries no server-side decoration.
+  const bool want_shadow = toplevel->csd_shadow_enabled &&
+                           toplevel->mapped && toplevel->ssd == nullptr &&
+                           !toplevel->maximized && !toplevel->tiled &&
+                           !toplevel->RequestedFullscreen();
+  if (!want_shadow || toplevel->scene_tree == nullptr) {
+    toplevel->csd_shadow.reset();
+    return;
+  }
+  if (toplevel->csd_shadow == nullptr) {
+    toplevel->csd_shadow =
+        std::make_unique<view::SsdShadow>(toplevel->scene_tree);
+  }
+  const wlr_box geometry = toplevel->Geometry();
+  // The toplevel scene tree origin coincides with the xdg geometry origin, so
+  // the shadow surrounds the content box at (0, 0, width, height).
+  const bool dialog =
+      toplevel->handle != nullptr && toplevel->handle->parent != nullptr;
+  const wlr_box frame = {
+      .x = 0, .y = 0, .width = geometry.width, .height = geometry.height};
+  toplevel->csd_shadow->Update(frame, active, dialog, false);
 }
 
 void CompositorPrivate::AttachSsd(Toplevel* toplevel) {
@@ -2100,6 +2187,7 @@ void CompositorPrivate::FocusToplevel(Toplevel* toplevel) {
     if (candidate->ssd != nullptr) {
       candidate->ssd->SetActive(candidate.get() == toplevel);
     }
+    UpdateCsdShadow(candidate.get());
   }
 
   wlr_surface* surface = toplevel->Surface();
@@ -2224,6 +2312,7 @@ void CompositorPrivate::SwitchWorkspace(int workspace) {
         candidate->workspace != current_workspace_) {
       candidate->ssd->SetActive(false);
     }
+    UpdateCsdShadow(candidate.get());
   }
   if (previous != nullptr && !previous->all_workspaces &&
       previous->workspace != current_workspace_) {
@@ -2462,6 +2551,7 @@ void CompositorPrivate::FocusLayerSurface(LayerSurface* layer_surface) {
     if (toplevel->ssd != nullptr) {
       toplevel->ssd->SetActive(false);
     }
+    UpdateCsdShadow(toplevel.get());
   }
 
   wlr_surface* surface = layer_surface->handle->surface;
@@ -2655,6 +2745,7 @@ void CompositorPrivate::SetMaximized(Toplevel* toplevel, bool maximized) {
     toplevel->ssd->SetMaximized(maximized);
   }
   RebuildSurfaceClip(toplevel);
+  UpdateCsdShadow(toplevel);
 
   if (maximized) {
     // Maximize onto the usable area of the output under the pointer.
@@ -2777,6 +2868,7 @@ void CompositorPrivate::TileToplevel(Toplevel* toplevel,
     toplevel->ssd->SetTiled(true);
   }
   RebuildSurfaceClip(toplevel);
+  UpdateCsdShadow(toplevel);
   if (toplevel->handle != nullptr) {
     wlr_xdg_toplevel_set_tiled(
         toplevel->handle,

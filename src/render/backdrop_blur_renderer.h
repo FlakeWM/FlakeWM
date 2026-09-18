@@ -45,6 +45,7 @@ class BackdropBlurRenderer final {
   wlr_renderer* Handle() const;
   bool IsSupported() const;
   bool HasActiveBlur() const;
+  bool HasRoundedCorners() const;
   void SetAllocator(wlr_allocator* allocator);
 
   void SetSurfaceBlur(wlr_surface* surface, const pixman_region32_t* region,

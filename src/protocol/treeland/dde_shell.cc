@@ -72,6 +72,12 @@ class LegacyDdeShellGlobal final : public TreelandGlobal {
         shell->owner_->SetRoundCorner(
             surface, no_radius ? 0 : static_cast<int>(radius_x + 0.5F));
       }
+      const bool no_shadow =
+          (effects & DDE_SHELL_EFFECTSCENE_EFFECTNOSHADOW) != 0;
+
+      // DTK2/5 never transmit ShadowRadius/ShadowOffset/ShadowColor, but only
+      // presents NoTitleBar & WindowRadius.
+      shell->owner_->SetShadow(surface, no_titlebar && !no_shadow);
     }
   };
 

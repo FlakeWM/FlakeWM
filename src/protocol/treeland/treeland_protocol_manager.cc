@@ -198,6 +198,9 @@ void TreelandProtocolManagerImpl::SplitSurface(wlr_surface* surface,
 void TreelandProtocolManagerImpl::SetTitlebar(wlr_surface* surface,
                                               bool enabled) const {
   if (compositor == nullptr) return;
+  // Remember the request even before the surface becomes a toplevel, so an
+  // xdg-decoration that arrives in between does not attach a titlebar.
+  compositor->SetNoTitlebarSurface(surface, !enabled);
   auto* toplevel = compositor->ToplevelForSurface(surface);
   if (toplevel == nullptr) return;
   compositor->SetSsdEnabled(toplevel, enabled);
@@ -214,6 +217,19 @@ void TreelandProtocolManagerImpl::SetRoundCorner(wlr_surface* surface,
   // Personalization is also used by in-process DTK popup surfaces. They are
   // not toplevels, but still need the same renderer mask as their blur.
   compositor->SetSurfaceRoundCorner(surface, radius);
+}
+
+void TreelandProtocolManagerImpl::SetShadow(wlr_surface* surface,
+                                            bool enabled) const {
+  if (compositor == nullptr) {
+    return;
+  }
+
+  auto* toplevel = compositor->ToplevelForSurface(surface);
+  if (toplevel == nullptr) {
+    return;
+  }
+  compositor->SetCsdShadow(toplevel, enabled);
 }
 
 void TreelandProtocolManagerImpl::SetBlur(wlr_surface* surface,
