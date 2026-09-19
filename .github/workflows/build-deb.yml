@@ -57,9 +57,14 @@ jobs:
           set -eux
           # Pre-install the backported versions that satisfy wlroots' version
           # constraints, so mk-build-deps sees them as already satisfied.
+          # Install the whole xkbcommon runtime family together so
+          # libxkbcommon-x11-0 stays at the same version as libxkbcommon0:
+          # qt6-base-dev -> libqt6gui6 -> libxkbcommon-x11-0 would otherwise
+          # grab the older trixie copy, whose `libxkbcommon0 (= 1.7.0)` pin
+          # conflicts with the backported libxkbcommon0.
           if [ -n "${{ matrix.backports }}" ]; then
             apt-get install -y -t "${{ matrix.backports }}" \
-              libxkbcommon-dev wayland-protocols
+              libxkbcommon-dev libxkbcommon-x11-0 wayland-protocols
           fi
           # gsettings-qt6 (touchpad settings) is optional and not packaged on
           # every distro; use it where available.
