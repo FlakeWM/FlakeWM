@@ -19,6 +19,8 @@
  * XWayland server lifecycle.
  */
 
+#include "src/xwayland/xwayland_manager/xwayland_manager.h"
+
 #include <absl/log/absl_log.h>
 #include <unistd.h>
 
@@ -30,7 +32,6 @@
 #include <utility>
 
 #include "src/core/compositor_private/compositor_private.h"
-#include "src/xwayland/xwayland_manager/xwayland_manager.h"
 #include "src/xwayland/xsurface/xsurface.h"
 
 namespace flakewm {
@@ -59,9 +60,7 @@ std::string LauncherPath() {
 XWaylandManager::XWaylandManager(core::CompositorPrivate* compositor)
     : compositor(compositor) {}
 
-XWaylandManager::~XWaylandManager() {
-  Stop();
-}
+XWaylandManager::~XWaylandManager() { Stop(); }
 
 bool XWaylandManager::Start(wl_display* display,
                             wlr_compositor* wlr_compositor) {

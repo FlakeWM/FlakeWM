@@ -23,6 +23,7 @@
  */
 
 #include "src/protocol/toplevel_drag/toplevel_drag.h"
+
 #include "src/protocol/toplevel_drag/toplevel_drag_manager.h"
 
 namespace flakewm {

@@ -43,10 +43,12 @@
 #include "protocol/plasma-virtual-desktop-protocol.h"
 #include "protocol/plasma-window-management-protocol.h"
 #include "src/core/compositor_private/compositor_private.h"
+#include "src/protocol/blur_level.h"
 #include "src/protocol/kde/kde_idle_manager.h"
 #include "src/protocol/kde/kde_output_manager.h"
 #include "src/protocol/protocol_manager/protocol_manager.h"
 #include "src/render/backdrop_blur_renderer.h"
+#include "src/render/blur_kernel.h"
 
 namespace flakewm {
 namespace protocol {
@@ -262,7 +264,8 @@ class KdeProtocolManager::Impl final {
               management, id.c_str(), static_cast<uint32_t>(index));
         }
       } else if (announced_workspace_count > count) {
-        for (int index = announced_workspace_count - 1; index >= count; --index) {
+        for (int index = announced_workspace_count - 1; index >= count;
+             --index) {
           const std::string id = DesktopId(index);
           org_kde_plasma_virtual_desktop_management_send_desktop_removed(
               management, id.c_str());
@@ -387,11 +390,10 @@ class KdeProtocolManager::Impl final {
         .server_side =
             previous != nullptr
                 ? previous->server_side
-                : (has_xdg
-                       ? manager->compositor->SsdEnabledForSurface(
-                             handle->surface)
-                       : handle->mode ==
-                             WLR_SERVER_DECORATION_MANAGER_MODE_SERVER),
+                : (has_xdg ? manager->compositor->SsdEnabledForSurface(
+                                 handle->surface)
+                           : handle->mode ==
+                                 WLR_SERVER_DECORATION_MANAGER_MODE_SERVER),
     };
     if (previous != nullptr) {
       previous->active = false;
@@ -412,8 +414,7 @@ class KdeProtocolManager::Impl final {
       return;
     }
     decoration->server_side =
-        decoration->handle->mode ==
-        WLR_SERVER_DECORATION_MANAGER_MODE_SERVER;
+        decoration->handle->mode == WLR_SERVER_DECORATION_MANAGER_MODE_SERVER;
     decoration->manager->ApplyServerDecoration(decoration->handle->surface);
   }
 
@@ -553,7 +554,8 @@ class KdeProtocolManager::Impl final {
     manager->desktop_management_resources.push_back(resource);
     wl_resource_set_implementation(resource, &implementation, manager,
                                    RemoveDesktopManagement);
-    for (int index = 0; index < manager->compositor->workspace_count_; ++index) {
+    for (int index = 0; index < manager->compositor->workspace_count_;
+         ++index) {
       const std::string desktop_id = DesktopId(index);
       org_kde_plasma_virtual_desktop_management_send_desktop_created(
           resource, desktop_id.c_str(), static_cast<uint32_t>(index));
@@ -1009,7 +1011,8 @@ class KdeProtocolManager::Impl final {
         static_cast<PlasmaWindow*>(wl_resource_get_user_data(resource));
     if (window == nullptr ||
         number >= static_cast<uint32_t>(
-                      window->manager->compositor->workspace_count_)) return;
+                      window->manager->compositor->workspace_count_))
+      return;
     core::CompositorPrivate::Toplevel* toplevel =
         window->manager->compositor->ToplevelForSurface(window->surface);
     window->manager->compositor->SetAllWorkspaces(toplevel, false);
@@ -1041,7 +1044,8 @@ class KdeProtocolManager::Impl final {
         static_cast<PlasmaWindow*>(wl_resource_get_user_data(resource));
     const std::optional<int> index = DesktopIndex(Safe(desktop_id));
     if (window == nullptr || !index.has_value() ||
-        *index >= window->manager->compositor->workspace_count_) return;
+        *index >= window->manager->compositor->workspace_count_)
+      return;
     core::CompositorPrivate::Toplevel* toplevel =
         window->manager->compositor->ToplevelForSurface(window->surface);
     window->manager->compositor->SetAllWorkspaces(toplevel, false);
@@ -1186,8 +1190,8 @@ class KdeProtocolManager::Impl final {
           org_kde_plasma_window_send_virtual_desktop_entered(
               resource, desktop_id.c_str());
         } else {
-          org_kde_plasma_window_send_virtual_desktop_left(
-              resource, desktop_id.c_str());
+          org_kde_plasma_window_send_virtual_desktop_left(resource,
+                                                          desktop_id.c_str());
         }
       }
     }
@@ -1223,15 +1227,21 @@ class KdeProtocolManager::Impl final {
       compositor->UpdateBackdropBlurState();
       return;
     }
-    static constexpr float offsets[] = {
-        1.5F, 2.0F,     2.5F,     3.0F, 2.6F,     3.2F,     3.8F, 4.4F,
-        5.0F, 3.83333F, 4.66667F, 5.5F, 6.33333F, 7.16667F, 8.0F};
-    const float offset =
-        static_cast<int32_t>(blur->strength) == -1
-            ? offsets[std::clamp(global_blur_strength, 1, 15) - 1]
-            : blur->strength / 1000.0F;
+    // A client that never called set_strength gets the compositor's own level,
+    // which is a rung of the shared ladder and therefore carries a pyramid
+    // depth as well as an offset.  A client that did call it names its own
+    // offset and gxde-wlcom blurs that at a fixed depth of 3 (kde_blur.c:61),
+    // which is what kBlurIterations defaults to.
+    const bool use_global_level = static_cast<int32_t>(blur->strength) == -1;
+    const BlurLevel& level = BlurLevelFor(global_blur_strength);
+    const float offset = use_global_level
+                             ? level.offset
+                             : static_cast<float>(blur->strength) / 1000.0F;
+    const int iterations =
+        use_global_level ? level.iterations : render::kBlurIterations;
     compositor->backdrop_blur_renderer_->SetSurfaceBlur(
-        blur->surface, &blur->current_region, std::max(offset, 0.001F));
+        blur->surface, &blur->current_region, std::max(offset, 0.001F),
+        iterations);
     compositor->UpdateBackdropBlurState();
   }
 

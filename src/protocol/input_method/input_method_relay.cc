@@ -22,6 +22,8 @@
  * Original code is modified to adapt C++ and Wlroots 0.20.2.
  */
 
+#include "src/protocol/input_method/input_method_relay.h"
+
 #include <algorithm>
 #include <memory>
 #include <string>
@@ -32,7 +34,6 @@
 #include "src/protocol/text_input/text_input_v1_manager.h"
 #include "src/protocol/text_input/text_input_v2_manager.h"
 #include "src/protocol/text_input/text_input_v3.h"
-#include "src/protocol/input_method/input_method_relay.h"
 
 namespace flakewm {
 namespace protocol {

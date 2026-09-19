@@ -28,13 +28,13 @@
 
 #include <absl/log/absl_log.h>
 #include <drm_fourcc.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <libinput.h>
 #include <linux/input-event-codes.h>
 #include <malloc.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <time.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 extern "C" {
@@ -78,8 +78,8 @@ extern "C" {
 #include <cstring>
 #include <utility>
 
-#include "src/dbus/wlcom/wlcom_dbus_manager.h"
 #include "src/core/compositor_private/compositor_private.h"
+#include "src/dbus/wlcom/wlcom_dbus_manager.h"
 #include "src/input/key_binding_manager.h"
 #include "src/render/backdrop_blur_renderer.h"
 #include "src/view/ssd/ssd_buffer/ssd_buffer.h"
@@ -194,8 +194,7 @@ bool SetClipboardPng(wl_display* display, wlr_seat* seat,
     wlr_data_source_destroy(&source->base);
     return false;
   }
-  wlr_seat_set_selection(seat, &source->base,
-                         wl_display_next_serial(display));
+  wlr_seat_set_selection(seat, &source->base, wl_display_next_serial(display));
   return true;
 }
 
@@ -208,9 +207,9 @@ bool GtkThemeInstalled(const QString& name) {
     const QString directory = root.endsWith(QStringLiteral(".themes"))
                                   ? root + QLatin1Char('/') + name
                                   : root + QStringLiteral("/themes/") + name;
-    for (const QString& file : {QStringLiteral("gtk-2.0/gtkrc"),
-                                QStringLiteral("gtk-3.0/gtk.css"),
-                                QStringLiteral("gtk-4.0/gtk.css")}) {
+    for (const QString& file :
+         {QStringLiteral("gtk-2.0/gtkrc"), QStringLiteral("gtk-3.0/gtk.css"),
+          QStringLiteral("gtk-4.0/gtk.css")}) {
       if (QFileInfo::exists(directory + QLatin1Char('/') + file)) return true;
     }
   }
@@ -247,7 +246,8 @@ bool SetAvailableGtkSettings(
     available = true;
     QString escaped = value;
     escaped.replace('\'', QStringLiteral("\\'"));
-    if (writable.readAllStandardOutput().trimmed() != QByteArrayLiteral("true") ||
+    if (writable.readAllStandardOutput().trimmed() !=
+            QByteArrayLiteral("true") ||
         QProcess::execute(QStringLiteral("gsettings"),
                           {QStringLiteral("set"), schema, key,
                            QStringLiteral("'%1'").arg(escaped)}) != 0)
@@ -311,20 +311,19 @@ struct ShortcutInfo {
   QList<qint32> defaults;
 };
 
-#define FLAKEWM_DBUS_STREAM_PAIR(Type, A, B)                              \
-  inline QDBusArgument& operator<<(QDBusArgument& out,                    \
-                                   const Type& value) {                   \
-    out.beginStructure();                                                 \
-    out << value.A << value.B;                                            \
-    out.endStructure();                                                   \
-    return out;                                                           \
-  }                                                                       \
-  inline const QDBusArgument& operator>>(const QDBusArgument& in,         \
-                                         Type& value) {                   \
-    in.beginStructure();                                                  \
-    in >> value.A >> value.B;                                             \
-    in.endStructure();                                                    \
-    return in;                                                            \
+#define FLAKEWM_DBUS_STREAM_PAIR(Type, A, B)                                \
+  inline QDBusArgument& operator<<(QDBusArgument& out, const Type& value) { \
+    out.beginStructure();                                                   \
+    out << value.A << value.B;                                              \
+    out.endStructure();                                                     \
+    return out;                                                             \
+  }                                                                         \
+  inline const QDBusArgument& operator>>(const QDBusArgument& in,           \
+                                         Type& value) {                     \
+    in.beginStructure();                                                    \
+    in >> value.A >> value.B;                                               \
+    in.endStructure();                                                      \
+    return in;                                                              \
   }
 
 FLAKEWM_DBUS_STREAM_PAIR(StringPair, first, second)
@@ -333,8 +332,7 @@ FLAKEWM_DBUS_STREAM_PAIR(State, name, values)
 FLAKEWM_DBUS_STREAM_PAIR(Input, name, type)
 #undef FLAKEWM_DBUS_STREAM_PAIR
 
-inline QDBusArgument& operator<<(QDBusArgument& out,
-                                 const KeySequence& value) {
+inline QDBusArgument& operator<<(QDBusArgument& out, const KeySequence& value) {
   out.beginStructure();
   out << value.keys;
   out.endStructure();
@@ -354,8 +352,7 @@ inline QDBusArgument& operator<<(QDBusArgument& out, const Effect& value) {
   out.endStructure();
   return out;
 }
-inline const QDBusArgument& operator>>(const QDBusArgument& in,
-                                       Effect& value) {
+inline const QDBusArgument& operator>>(const QDBusArgument& in, Effect& value) {
   in.beginStructure();
   in >> value.name >> value.priority >> value.enabled;
   in.endStructure();
@@ -367,8 +364,7 @@ inline QDBusArgument& operator<<(QDBusArgument& out, const Plugin& value) {
   out.endStructure();
   return out;
 }
-inline const QDBusArgument& operator>>(const QDBusArgument& in,
-                                       Plugin& value) {
+inline const QDBusArgument& operator>>(const QDBusArgument& in, Plugin& value) {
   in.beginStructure();
   in >> value.name >> value.loaded >> value.enabled;
   in.endStructure();

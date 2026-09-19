@@ -19,6 +19,8 @@
  * The file is adapted from GXDE KWin's Window Preview screen.
  */
 
+#include "src/view/window_previews/window_previews.h"
+
 #include <linux/input-event-codes.h>
 #include <xkbcommon/xkbcommon-keysyms.h>
 
@@ -28,7 +30,6 @@
 #include <utility>
 
 #include "src/view/window_previews/window_previews_renderer.h"
-#include "src/view/window_previews/window_previews.h"
 
 namespace flakewm {
 namespace view {

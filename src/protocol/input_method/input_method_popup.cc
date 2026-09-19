@@ -23,6 +23,7 @@
  */
 
 #include "src/protocol/input_method/input_method_popup.h"
+
 #include "src/protocol/input_method/input_method_relay.h"
 
 namespace flakewm {

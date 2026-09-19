@@ -22,12 +22,13 @@
  * Original code is modified to adapt C++ and Wlroots 0.20.2.
  */
 
+#include "src/protocol/text_input/text_input_v1_manager.h"
+
 #include <algorithm>
 #include <memory>
 
 #include "src/protocol/input_method/input_method_relay.h"
 #include "src/protocol/text_input/text_input_v1.h"
-#include "src/protocol/text_input/text_input_v1_manager.h"
 
 extern "C" {
 #include "protocol/text-input-unstable-v1-protocol.h"

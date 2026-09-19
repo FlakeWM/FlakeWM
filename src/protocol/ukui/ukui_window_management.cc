@@ -158,9 +158,9 @@ void UkuiProtocolManager::Impl::SetWindowState(wl_client*,
         window->surface, (state & UKUI_WINDOW_STATE_FULLSCREEN) != 0, nullptr);
   }
   constexpr uint32_t kExtraMask =
-      UKUI_WINDOW_STATE_KEEP_BELOW |
-      UKUI_WINDOW_STATE_DEMANDS_ATTENTION | UKUI_WINDOW_STATE_SKIPTASKBAR |
-      UKUI_WINDOW_STATE_SKIPSWITCHER | UKUI_WINDOW_STATE_MODALITY;
+      UKUI_WINDOW_STATE_KEEP_BELOW | UKUI_WINDOW_STATE_DEMANDS_ATTENTION |
+      UKUI_WINDOW_STATE_SKIPTASKBAR | UKUI_WINDOW_STATE_SKIPSWITCHER |
+      UKUI_WINDOW_STATE_MODALITY;
   window->extra_state = (window->extra_state & ~(flags & kExtraMask)) |
                         (state & flags & kExtraMask);
   core::CompositorPrivate::Toplevel* toplevel =
@@ -238,7 +238,8 @@ void UkuiProtocolManager::Impl::EnterVirtualDesktop(wl_client*,
   Window* window = WindowFromResource(resource);
   const std::optional<int> index = DesktopIndex(Safe(id));
   if (window == nullptr || !index.has_value() ||
-      *index >= window->manager->compositor->workspace_count_) return;
+      *index >= window->manager->compositor->workspace_count_)
+    return;
   core::CompositorPrivate::Toplevel* toplevel =
       window->manager->compositor->ToplevelForSurface(window->surface);
   window->manager->compositor->SetAllWorkspaces(toplevel, false);

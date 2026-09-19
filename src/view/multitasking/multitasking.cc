@@ -19,6 +19,8 @@
  * The layout is adapted from GXDE KWin's Multitasking screen.
  */
 
+#include "src/view/multitasking/multitasking.h"
+
 #include <linux/input-event-codes.h>
 #include <xkbcommon/xkbcommon-keysyms.h>
 
@@ -26,7 +28,6 @@
 #include <cmath>
 #include <utility>
 
-#include "src/view/multitasking/multitasking.h"
 #include "src/view/multitasking/multitasking_renderer.h"
 #include "src/view/multitasking/multitasking_wallpaper.h"
 #include "src/view/ssd/ssd_buffer/ssd_buffer.h"

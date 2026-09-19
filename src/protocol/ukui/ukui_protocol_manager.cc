@@ -22,6 +22,8 @@
  * Original code is modified to adapt C++ and Wlroots 0.20.2.
  */
 
+#include "src/protocol/ukui/ukui_protocol_manager.h"
+
 #include <absl/log/absl_log.h>
 
 #include <memory>
@@ -32,7 +34,6 @@
 #include "protocol/ukui-window-management-protocol.h"
 #include "src/core/compositor_private/compositor_private.h"
 #include "src/protocol/ukui/ukui_protocol_manager_internal.h"
-#include "src/protocol/ukui/ukui_protocol_manager.h"
 #include "src/render/backdrop_blur_renderer.h"
 
 namespace flakewm {

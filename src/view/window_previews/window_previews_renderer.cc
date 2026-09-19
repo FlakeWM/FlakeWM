@@ -19,6 +19,8 @@
  * The file is adapted from GXDE KWin's Window Preview screen.
  */
 
+#include "src/view/window_previews/window_previews_renderer.h"
+
 #include <absl/log/absl_log.h>
 
 #include <QCoreApplication>
@@ -34,7 +36,6 @@
 #include <QVariant>
 #include <algorithm>
 
-#include "src/view/window_previews/window_previews_renderer.h"
 #include "src/view/ssd/ssd_buffer/ssd_buffer.h"
 #include "src/view/ssd/window_icon_provider/window_icon_provider.h"
 

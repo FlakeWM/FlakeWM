@@ -50,7 +50,7 @@ void WlcomDbusManager::AddInput(wlr_input_device* device) {
       libinput == nullptr ? 0 : libinput_device_get_id_vendor(libinput);
   const unsigned int product =
       libinput == nullptr ? 0 : libinput_device_get_id_product(libinput);
-  
+
   // Packed aligning GXWM's input_prop union. The value is uint32.
   quint32 properties = 0;
   if (libinput != nullptr) {
@@ -766,7 +766,8 @@ void WlcomDbusManager::ExecuteInputAction(const QJsonObject& action) {
           result.press = false;
         }
       }
-      for (const QString& name : action_parts.value(0).split(QLatin1Char('+'))) {
+      for (const QString& name :
+           action_parts.value(0).split(QLatin1Char('+'))) {
         const uint32_t code = keycodes.value(name.toLower());
         if (code != 0) result.codes.push_back(code);
       }
@@ -783,9 +784,9 @@ void WlcomDbusManager::ExecuteInputAction(const QJsonObject& action) {
       }
     }
     auto send = [&](uint32_t code, bool pressed) {
-      const wl_keyboard_key_state state =
-          pressed ? WL_KEYBOARD_KEY_STATE_PRESSED
-                  : WL_KEYBOARD_KEY_STATE_RELEASED;
+      const wl_keyboard_key_state state = pressed
+                                              ? WL_KEYBOARD_KEY_STATE_PRESSED
+                                              : WL_KEYBOARD_KEY_STATE_RELEASED;
       if (keyboard != nullptr) {
         wlr_keyboard_key_event event = {.time_msec = MonotonicTimeMsec(),
                                         .keycode = code,
@@ -834,18 +835,18 @@ void WlcomDbusManager::LoadInputActions() {
 void WlcomDbusManager::SetupUkuiShortcutIntegration() {
   QDBusConnectionInterface* bus = session_bus_.interface();
   if (bus == nullptr) return;
-  QObject::connect(bus, &QDBusConnectionInterface::serviceRegistered, this,
-                   [this](const QString& name) {
-                     if (name.startsWith(
-                             QStringLiteral("org.ukui.settingsDaemon")))
-                       AddUkuiShortcutService(name);
-                   });
-  QObject::connect(bus, &QDBusConnectionInterface::serviceUnregistered, this,
-                   [this](const QString& name) {
-                     if (name.startsWith(
-                             QStringLiteral("org.ukui.settingsDaemon")))
-                       RemoveUkuiShortcutService(name);
-                   });
+  QObject::connect(
+      bus, &QDBusConnectionInterface::serviceRegistered, this,
+      [this](const QString& name) {
+        if (name.startsWith(QStringLiteral("org.ukui.settingsDaemon")))
+          AddUkuiShortcutService(name);
+      });
+  QObject::connect(
+      bus, &QDBusConnectionInterface::serviceUnregistered, this,
+      [this](const QString& name) {
+        if (name.startsWith(QStringLiteral("org.ukui.settingsDaemon")))
+          RemoveUkuiShortcutService(name);
+      });
   const QDBusReply<QStringList> names = bus->registeredServiceNames();
   if (!names.isValid()) return;
   for (const QString& name : names.value()) {
@@ -867,7 +868,8 @@ void WlcomDbusManager::AddUkuiShortcutService(const QString& name) {
         new QDBusPendingCallWatcher(session_bus_.asyncCall(call), this);
     QObject::connect(
         watcher, &QDBusPendingCallWatcher::finished, this,
-        [this, name, whitelist = request.second](QDBusPendingCallWatcher* done) {
+        [this, name,
+         whitelist = request.second](QDBusPendingCallWatcher* done) {
           QDBusPendingReply<QStringList> reply = *done;
           if (reply.isValid() && ukui_shortcut_services_.contains(name))
             ApplyUkuiShortcutTypes(name, reply.value(), whitelist);
@@ -876,11 +878,12 @@ void WlcomDbusManager::AddUkuiShortcutService(const QString& name) {
   }
 }
 
-void WlcomDbusManager::ApplyUkuiShortcutTypes(
-    const QString& service, const QStringList& types, bool whitelist) {
+void WlcomDbusManager::ApplyUkuiShortcutTypes(const QString& service,
+                                              const QStringList& types,
+                                              bool whitelist) {
   if (key_bindings_ == nullptr) return;
-  auto named_type = [](const QString& name)
-      -> std::optional<input::KeyBindingType> {
+  auto named_type =
+      [](const QString& name) -> std::optional<input::KeyBindingType> {
     for (std::size_t index = 0;
          index < static_cast<std::size_t>(input::KeyBindingType::kCount);
          ++index) {

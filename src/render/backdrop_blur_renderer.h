@@ -25,6 +25,7 @@
 #include <array>
 #include <memory>
 
+#include "src/render/blur_kernel.h"
 #include "src/wlr_wrapper/wlroots.h"
 
 namespace flakewm {
@@ -48,8 +49,11 @@ class BackdropBlurRenderer final {
   bool HasRoundedCorners() const;
   void SetAllocator(wlr_allocator* allocator);
 
+  // `offset` is gxde-wlcom's pyramid tap scale, not a pixel radius -- see
+  // blur_kernel.h.  `iterations` is that pyramid's depth, which gxde-wlcom
+  // varies per level for the UKUI protocol and fixes at 3 everywhere else.
   void SetSurfaceBlur(wlr_surface* surface, const pixman_region32_t* region,
-                      float offset);
+                      float offset, int iterations = kBlurIterations);
   void ClearSurfaceBlur(wlr_surface* surface);
   // Radius order: top-left, top-right, bottom-right, bottom-left.  The
   // compositor supplies logical surface pixels; the renderer scales them to
@@ -58,7 +62,8 @@ class BackdropBlurRenderer final {
                              const std::array<int, 4>& radii);
   void ClearSurfaceRoundCorner(wlr_surface* surface);
   void SetTextureBlur(const void* owner, wlr_texture* texture,
-                      const pixman_region32_t* region, float offset);
+                      const pixman_region32_t* region, float offset,
+                      int iterations = kBlurIterations);
   void ClearTextureBlur(const void* owner);
 
  private:

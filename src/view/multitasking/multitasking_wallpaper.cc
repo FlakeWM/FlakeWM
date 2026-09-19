@@ -33,8 +33,8 @@
 #include <QGSettings/QGSettings>
 #endif
 
-#include "src/view/ssd/ssd_buffer/ssd_buffer.h"
 #include "src/view/multitasking/multitasking_wallpaper.h"
+#include "src/view/ssd/ssd_buffer/ssd_buffer.h"
 
 namespace flakewm {
 namespace view {

@@ -244,9 +244,7 @@ void Ssd::Arrange() {
   Render();
 }
 
-int Ssd::BorderWidth() const {
-  return maximized_ || tiled_ ? 0 : kBorderWidth;
-}
+int Ssd::BorderWidth() const { return maximized_ || tiled_ ? 0 : kBorderWidth; }
 
 void Ssd::OnTreeDestroy(Ssd* ssd, void*) {
   ssd->tree_destroy_.Disconnect();

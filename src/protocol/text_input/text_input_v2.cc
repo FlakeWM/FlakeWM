@@ -22,9 +22,9 @@
  * Original code is modified to adapt C++ and Wlroots 0.20.2.
  */
 
-#include <string>
-
 #include "src/protocol/text_input/text_input_v2.h"
+
+#include <string>
 
 extern "C" {
 #include "protocol/text-input-unstable-v2-protocol.h"

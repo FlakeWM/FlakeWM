@@ -35,8 +35,7 @@ class SsdSurfaceClip final {
  public:
   static std::unique_ptr<SsdSurfaceClip> Create(wlr_scene_tree* xdg_tree,
                                                 wlr_surface* surface,
-                                                int radius,
-                                                bool clip_top);
+                                                int radius, bool clip_top);
   ~SsdSurfaceClip();
 
   SsdSurfaceClip(const SsdSurfaceClip&) = delete;

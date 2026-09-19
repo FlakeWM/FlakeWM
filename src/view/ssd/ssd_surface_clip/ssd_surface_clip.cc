@@ -36,10 +36,8 @@ float PixelCoverage(int radius, int row, int column) {
   for (int sample_y = 0; sample_y < kSamples; ++sample_y) {
     const double y = row - 1.0 + (sample_y + 0.5) / kSamples;
     for (int sample_x = 0; sample_x < kSamples; ++sample_x) {
-      const double x =
-          1.0 + column + (sample_x + 0.5) / kSamples - radius;
-      if (y <= 0.0 || x >= 0.0 ||
-          x * x + y * y <= radius * radius) {
+      const double x = 1.0 + column + (sample_x + 0.5) / kSamples - radius;
+      if (y <= 0.0 || x >= 0.0 || x * x + y * y <= radius * radius) {
         ++inside;
       }
     }
@@ -77,9 +75,8 @@ std::unique_ptr<SsdSurfaceClip> SsdSurfaceClip::Create(wlr_scene_tree* xdg_tree,
   wlr_scene_tree* surface_tree = nullptr;
   surface_tree = wl_container_of(first, surface_tree, node);
 
-  auto clip = std::unique_ptr<SsdSurfaceClip>(
-      new SsdSurfaceClip(xdg_tree, surface_tree, surface,
-                         std::clamp(radius, 1, 64), clip_top));
+  auto clip = std::unique_ptr<SsdSurfaceClip>(new SsdSurfaceClip(
+      xdg_tree, surface_tree, surface, std::clamp(radius, 1, 64), clip_top));
   return clip->Initialize() ? std::move(clip) : nullptr;
 }
 
@@ -144,11 +141,10 @@ bool SsdSurfaceClip::Initialize() {
           opaque_inset = column;
           break;
         }
-        if (coverage > 0.001F &&
-            (!add_segment(Segment::Alignment::kLeft, top, row, column,
-                          coverage) ||
-             !add_segment(Segment::Alignment::kRight, top, row, column,
-                          coverage))) {
+        if (coverage > 0.001F && (!add_segment(Segment::Alignment::kLeft, top,
+                                               row, column, coverage) ||
+                                  !add_segment(Segment::Alignment::kRight, top,
+                                               row, column, coverage))) {
           return false;
         }
       }
@@ -186,8 +182,8 @@ void SsdSurfaceClip::Update(const wlr_box& geometry, bool maximized) {
     const bool right = segment.alignment == Segment::Alignment::kRight;
     const bool center = segment.alignment == Segment::Alignment::kCenter;
     const int x = right ? geometry.width - segment.inset - 1 : segment.inset;
-    const int y = segment.top ? segment.row
-                              : geometry.height - radius_ + segment.row;
+    const int y =
+        segment.top ? segment.row : geometry.height - radius_ + segment.row;
     const wlr_box segment_clip = {
         .x = geometry.x + x,
         .y = geometry.y + y,

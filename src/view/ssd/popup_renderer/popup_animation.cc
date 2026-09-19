@@ -21,10 +21,10 @@
  * Now re-licensed under GPLv3.
  */
 
+#include "src/view/ssd/popup_renderer/popup_animation.h"
+
 #include <algorithm>
 #include <utility>
-
-#include "src/view/ssd/popup_renderer/popup_animation.h"
 
 namespace flakewm {
 namespace view {
@@ -36,10 +36,9 @@ constexpr int kFadeOutMs = 150;
 
 double EaseInOutQuad(double value) {
   value = std::clamp(value, 0.0, 1.0);
-  return value < 0.5 ? 2.0 * value * value
-                     : 1.0 - ((-2.0 * value + 2.0) *
-                              (-2.0 * value + 2.0)) /
-                                 2.0;
+  return value < 0.5
+             ? 2.0 * value * value
+             : 1.0 - ((-2.0 * value + 2.0) * (-2.0 * value + 2.0)) / 2.0;
 }
 
 }  // namespace

@@ -22,11 +22,9 @@
  * Original code is modified to adapt C++ and Wlroots 0.20.2.
  */
 
-#include <algorithm>
-#include <array>
-
 #include "protocol/ukui-blur-v1-protocol.h"
 #include "src/core/compositor_private/compositor_private.h"
+#include "src/protocol/blur_level.h"
 #include "src/protocol/ukui/ukui_protocol_manager_internal.h"
 #include "src/render/backdrop_blur_renderer.h"
 
@@ -141,11 +139,10 @@ void UkuiProtocolManager::Impl::ApplyBlur(Blur* blur) const {
        pixman_region32_empty(&blur->current_region))) {
     compositor->backdrop_blur_renderer_->ClearSurfaceBlur(blur->surface);
   } else {
-    static constexpr std::array<float, 15> offsets = {
-        1.5F, 2.0F,     2.5F,     3.0F, 2.6F,     3.2F,     3.8F, 4.4F,
-        5.0F, 3.83333F, 4.66667F, 5.5F, 6.33333F, 7.16667F, 8.0F};
+    const BlurLevel& level =
+        BlurLevelFor(static_cast<int>(blur->current_level));
     compositor->backdrop_blur_renderer_->SetSurfaceBlur(
-        blur->surface, &blur->current_region, offsets[blur->current_level - 1]);
+        blur->surface, &blur->current_region, level.offset, level.iterations);
   }
   compositor->UpdateBackdropBlurState();
 }

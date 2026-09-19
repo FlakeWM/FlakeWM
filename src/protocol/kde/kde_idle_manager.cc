@@ -22,11 +22,12 @@
  * Original code is modified to adapt C++ and Wlroots 0.20.2.
  */
 
+#include "src/protocol/kde/kde_idle_manager.h"
+
 #include <algorithm>
 #include <limits>
 
 #include "protocol/idle-protocol.h"
-#include "src/protocol/kde/kde_idle_manager.h"
 
 namespace flakewm {
 namespace protocol {

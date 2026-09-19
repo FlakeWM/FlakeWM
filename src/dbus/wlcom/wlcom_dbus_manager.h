@@ -87,8 +87,8 @@ class WlcomDbusManager final : public QDBusVirtualObject {
   void SetupUkuiShortcutIntegration();
   void AddUkuiShortcutService(const QString& name);
   void RemoveUkuiShortcutService(const QString& name);
-  void ApplyUkuiShortcutTypes(const QString& service,
-                              const QStringList& types, bool whitelist);
+  void ApplyUkuiShortcutTypes(const QString& service, const QStringList& types,
+                              bool whitelist);
   void ExecuteInputAction(const QJsonObject& action);
   bool HandleGestureAction(const char* type, const char* device,
                            const char* direction, uint32_t fingers,

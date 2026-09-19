@@ -201,14 +201,12 @@ bool WlcomDbusManager::ApplyOutputColor(wlr_output* output, int brightness,
                     : 329.698727446 * std::pow(value - 60.0, -0.1332047592)),
         channel(value <= 66.0
                     ? 99.4708025861 * std::log(value) - 161.1195681661
-                    : 288.1221695283 *
-                          std::pow(value - 60.0, -0.0755148492)),
+                    : 288.1221695283 * std::pow(value - 60.0, -0.0755148492)),
         channel(value >= 66.0
                     ? 255.0
-                    : (value <= 19.0
-                           ? 0.0
-                           : 138.5177312231 * std::log(value - 10.0) -
-                                 305.0447927307)),
+                    : (value <= 19.0 ? 0.0
+                                     : 138.5177312231 * std::log(value - 10.0) -
+                                           305.0447927307)),
     };
   };
   const std::array<float, 3> neutral = temperature_channels(65.0);

@@ -21,6 +21,8 @@
  * Now re-licensed under GPLv3.
  */
 
+#include "src/view/ssd/split_screen_switcher/split_screen_switcher.h"
+
 #include <linux/input-event-codes.h>
 
 #include <algorithm>
@@ -29,7 +31,6 @@
 #include <memory>
 #include <utility>
 
-#include "src/view/ssd/split_screen_switcher/split_screen_switcher.h"
 #include "src/view/ssd/popup_renderer/popup_animation.h"
 #include "src/view/ssd/popup_renderer/popup_renderer.h"
 #include "src/view/ssd/ssd_buffer/ssd_buffer.h"
@@ -41,7 +42,10 @@ namespace {
 constexpr int kWidth = 204;
 constexpr int kHeight = 80;
 constexpr int kShowDelayMs = 500;
-constexpr float kBlurOffset = 3.0F;
+// A 204x80 popup panel, so it takes the popup offset gxde-wlcom uses in
+// src/view/treeland_personalization.c -- (iterations 3, offset 0.60), the same
+// as a menu.  The depth stays at the kernel default of 3.
+constexpr float kBlurOffset = 0.60F;
 
 struct ItemRect {
   int x;
@@ -73,17 +77,18 @@ bool IgnoreInput(wlr_scene_buffer*, double*, double*) { return false; }
 
 }  // namespace
 
-SplitScreenSwitcher::SplitScreenSwitcher(
-    wlr_scene_tree* overlay_parent, Activate activate,
-    ScreenGeometry screen_geometry, SetBlur set_blur, ClearBlur clear_blur)
+SplitScreenSwitcher::SplitScreenSwitcher(wlr_scene_tree* overlay_parent,
+                                         Activate activate,
+                                         ScreenGeometry screen_geometry,
+                                         SetBlur set_blur, ClearBlur clear_blur)
     : renderer_(std::make_unique<PopupRenderer>(
           "qrc:/flakewm/split_screen_switcher/split_screen_switcher.qml")),
       activate_(std::move(activate)),
       screen_geometry_(std::move(screen_geometry)),
       set_blur_(std::move(set_blur)),
       clear_blur_(std::move(clear_blur)) {
-  animation_ = std::make_unique<PopupAnimation>(
-      [this](double value, bool finished) {
+  animation_ =
+      std::make_unique<PopupAnimation>([this](double value, bool finished) {
         ApplyAnimationFrame(value, finished);
       });
   show_timer_.setSingleShot(true);
@@ -162,9 +167,8 @@ bool SplitScreenSwitcher::HandleButton(uint32_t button,
     UpdateView();
     return true;
   }
-  const int selected = pressed_item_ >= 0 && pressed_item_ == hovered_item_
-                           ? pressed_item_
-                           : -1;
+  const int selected =
+      pressed_item_ >= 0 && pressed_item_ == hovered_item_ ? pressed_item_ : -1;
   pressed_item_ = -1;
   pointer_inside_ = false;
   if (selected >= 0 && selected < static_cast<int>(kTiles.size()) &&
@@ -291,8 +295,8 @@ void SplitScreenSwitcher::ClearRegisteredBlur() {
   if (clear_blur_) clear_blur_(this);
 }
 
-void SplitScreenSwitcher::OnBlurNodeSample(
-    SplitScreenSwitcher* switcher, wlr_scene_output_sample_event*) {
+void SplitScreenSwitcher::OnBlurNodeSample(SplitScreenSwitcher* switcher,
+                                           wlr_scene_output_sample_event*) {
   if (!switcher->visible_ || !switcher->set_blur_ ||
       switcher->blur_node_ == nullptr) {
     return;

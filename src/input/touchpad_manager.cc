@@ -40,8 +40,8 @@
 #include <QGSettings/QGSettings>
 #endif
 
-#include "src/utils/signal_listener.h"
 #include "src/input/touchpad_manager.h"
+#include "src/utils/signal_listener.h"
 
 namespace flakewm {
 namespace input {
@@ -102,9 +102,9 @@ TouchpadManager::TouchpadManager()
     if (touch_gesture_.type != GestureType::kHold || touch_points_.empty())
       return;
     touch_gesture_.triggered = true;
-    touch_gesture_.handled = ExecuteGesture(
-        "hold", "none", touch_gesture_.fingers, "trigger", "none", 0, 0,
-        "touch", TouchEdge());
+    touch_gesture_.handled =
+        ExecuteGesture("hold", "none", touch_gesture_.fingers, "trigger",
+                       "none", 0, 0, "touch", TouchEdge());
   });
 #ifdef FLAKEWM_HAS_QGSETTINGS
   if (QGSettings::isSchemaInstalled(kTouchpadSchema)) {
@@ -180,9 +180,9 @@ void TouchpadManager::UpdateSwipe(double delta_x, double delta_y) {
           kSwipeThreshold) {
     gesture_.triggered = true;
     gesture_.direction = SwipeDirection(gesture_.delta_x, gesture_.delta_y);
-    gesture_.handled |= ExecuteGesture(
-        "swipe", gesture_.direction.c_str(), gesture_.fingers, "trigger",
-        "none", gesture_.delta_x, gesture_.delta_y);
+    gesture_.handled |=
+        ExecuteGesture("swipe", gesture_.direction.c_str(), gesture_.fingers,
+                       "trigger", "none", gesture_.delta_x, gesture_.delta_y);
     gesture_.follow_dx = 0;
     gesture_.follow_dy = 0;
     return;
@@ -219,9 +219,9 @@ bool TouchpadManager::EndSwipe(bool cancelled) {
   if (!gesture_.triggered) {
     gesture_.triggered = true;
     gesture_.direction = SwipeDirection(gesture_.delta_x, gesture_.delta_y);
-    gesture_.handled |= ExecuteGesture(
-        "swipe", gesture_.direction.c_str(), gesture_.fingers, "trigger",
-        "none", gesture_.delta_x, gesture_.delta_y);
+    gesture_.handled |=
+        ExecuteGesture("swipe", gesture_.direction.c_str(), gesture_.fingers,
+                       "trigger", "none", gesture_.delta_x, gesture_.delta_y);
   }
   gesture_.handled |= ExecuteGesture("swipe", gesture_.direction.c_str(),
                                      gesture_.fingers, "stop");
@@ -289,9 +289,9 @@ void TouchpadManager::TouchDown(wlr_touch* touch, std::int32_t id, double x,
                            .y = y,
                            .last_x = x,
                            .last_y = y});
-  touch_gesture_ = {.type = GestureType::kHold,
-                    .fingers =
-                        static_cast<std::uint32_t>(touch_points_.size())};
+  touch_gesture_ = {
+      .type = GestureType::kHold,
+      .fingers = static_cast<std::uint32_t>(touch_points_.size())};
   touch_hold_timer_.start(800);
 }
 
@@ -315,8 +315,7 @@ void TouchpadManager::TouchMotion(wlr_touch* touch, std::int32_t id, double x,
   }
 
   touch_gesture_.type = GestureType::kSwipe;
-  touch_gesture_.fingers =
-      static_cast<std::uint32_t>(touch_points_.size());
+  touch_gesture_.fingers = static_cast<std::uint32_t>(touch_points_.size());
   double total_x = 0, total_y = 0, follow_x = 0, follow_y = 0;
   for (const TouchPoint& item : touch_points_) {
     total_x += item.x - item.initial_x;
@@ -372,8 +371,8 @@ void TouchpadManager::TouchUp(wlr_touch* touch, std::int32_t id,
       touch_gesture_.direction = SwipeDirection(dx, dy);
       touch_gesture_.triggered = true;
       ExecuteGesture("swipe", touch_gesture_.direction.c_str(),
-                     touch_gesture_.fingers, "trigger", "none", dx, dy,
-                     "touch", edge);
+                     touch_gesture_.fingers, "trigger", "none", dx, dy, "touch",
+                     edge);
     }
     if (touch_gesture_.triggered)
       ExecuteGesture("swipe", touch_gesture_.direction.c_str(),

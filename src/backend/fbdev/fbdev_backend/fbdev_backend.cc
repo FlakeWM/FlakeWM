@@ -22,13 +22,13 @@
  * Original code is modified to adapt C++ and Wlroots 0.20.2.
  */
 
+#include "src/backend/fbdev/fbdev_backend/fbdev_backend.h"
+
 #include <absl/log/absl_log.h>
 
 #include <algorithm>
 #include <string>
 #include <vector>
-
-#include "src/backend/fbdev/fbdev_backend/fbdev_backend.h"
 
 namespace flakewm {
 namespace backend {

@@ -59,10 +59,11 @@ bool WlcomDbusManager::HandleTheme(const QDBusMessage& message) {
     QString name = args.value(0).toString();
     const bool valid = !name.isEmpty() && !name.contains(QDir::separator()) &&
                        name != QStringLiteral("hicolor");
-    const bool ok = valid && SetAvailableGtkSettings(
-                                 {{QStringLiteral("org.gnome.desktop.interface"),
-                                   QStringLiteral("icon-theme")}},
-                                 name);
+    const bool ok =
+        valid &&
+        SetAvailableGtkSettings({{QStringLiteral("org.gnome.desktop.interface"),
+                                  QStringLiteral("icon-theme")}},
+                                name);
     if (ok) {
       theme[QStringLiteral("icon_theme_name")] = args[0].toString();
       persist();
@@ -72,13 +73,13 @@ bool WlcomDbusManager::HandleTheme(const QDBusMessage& message) {
   }
   if (message.member() == QStringLiteral("SetGTK")) {
     const QString name = args.value(0).toString();
-    const bool ok = GtkThemeInstalled(name) &&
-                    SetAvailableGtkSettings(
-                        {{QStringLiteral("org.ukui.style"),
-                          QStringLiteral("widget-theme-name")},
-                         {QStringLiteral("org.gnome.desktop.interface"),
-                          QStringLiteral("gtk-theme")}},
-                        name);
+    const bool ok =
+        GtkThemeInstalled(name) &&
+        SetAvailableGtkSettings({{QStringLiteral("org.ukui.style"),
+                                  QStringLiteral("widget-theme-name")},
+                                 {QStringLiteral("org.gnome.desktop.interface"),
+                                  QStringLiteral("gtk-theme")}},
+                                name);
     Reply(message, {ok});
     return true;
   }

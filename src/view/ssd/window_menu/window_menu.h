@@ -84,8 +84,7 @@ class WindowMenu final {
   bool Show(wlr_surface* surface, double x, double y);
   bool HandleMotion(double x, double y);
   bool HandleButton(uint32_t button, wl_pointer_button_state state);
-  bool HandleKey(wlr_keyboard* keyboard,
-                 const wlr_keyboard_key_event& event);
+  bool HandleKey(wlr_keyboard* keyboard, const wlr_keyboard_key_event& event);
   void SurfaceUnavailable(wlr_surface* surface);
   void Cancel();
   bool IsActive() const;

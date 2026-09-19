@@ -19,13 +19,14 @@
  * This is an implementation of GXDE Protocol manager.
  */
 
+#include "src/protocol/gxde/gxde_protocol_manager.h"
+
 #include <cstring>
 #include <memory>
 
 #include "src/core/compositor_private/compositor_private.h"
 #include "src/protocol/gxde/gxde_protocol_manager_internal.h"
 #include "src/protocol/protocol_manager/protocol_manager.h"
-#include "src/protocol/gxde/gxde_protocol_manager.h"
 
 namespace flakewm {
 namespace protocol {

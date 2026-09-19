@@ -19,8 +19,8 @@
  * XWayland launcher.
  */
 
-#include <unistd.h>
 #include <sysexits.h>
+#include <unistd.h>
 
 #include <cstdio>
 #include <vector>

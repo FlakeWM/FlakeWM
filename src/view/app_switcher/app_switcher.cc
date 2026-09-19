@@ -19,6 +19,8 @@
  * The layout is adapted from GXDE KWin's thumbnail_grid window switcher.
  */
 
+#include "src/view/app_switcher/app_switcher.h"
+
 #include <absl/log/absl_log.h>
 #include <xkbcommon/xkbcommon-keysyms.h>
 
@@ -40,7 +42,6 @@
 
 #include "src/view/ssd/ssd_buffer/ssd_buffer.h"
 #include "src/view/ssd/window_icon_provider/window_icon_provider.h"
-#include "src/view/app_switcher/app_switcher.h"
 
 namespace flakewm {
 namespace view {
@@ -52,7 +53,10 @@ constexpr int kBoxMargin = 32;
 constexpr int kPopupPadding = 70;
 constexpr int kMaximumRows = 2;
 constexpr int kPanelRadius = 6;
-constexpr float kBlurOffset = 5.0F;
+// The Alt-Tab overlay is gxde-wlcom's window switcher, which blurs its inner
+// background at (iterations 3, offset 4.0) -- src/view/window_switcher.c.  The
+// depth stays at the kernel default of 3.
+constexpr float kBlurOffset = 4.0F;
 
 bool IgnoreInput(wlr_scene_buffer*, double*, double*) { return false; }
 

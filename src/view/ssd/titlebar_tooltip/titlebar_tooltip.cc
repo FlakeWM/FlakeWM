@@ -21,6 +21,8 @@
  * Now re-licensed under GPLv3.
  */
 
+#include "src/view/ssd/titlebar_tooltip/titlebar_tooltip.h"
+
 #include <QFont>
 #include <QFontMetrics>
 #include <QString>
@@ -29,7 +31,6 @@
 #include <memory>
 #include <utility>
 
-#include "src/view/ssd/titlebar_tooltip/titlebar_tooltip.h"
 #include "src/view/ssd/popup_renderer/popup_animation.h"
 #include "src/view/ssd/popup_renderer/popup_renderer.h"
 #include "src/view/ssd/ssd_buffer/ssd_buffer.h"
@@ -41,7 +42,10 @@ namespace {
 constexpr int kShowDelayMs = 500;
 constexpr int kAutoHideMs = 10000;
 constexpr int kCursorOffset = 40;
-constexpr float kBlurOffset = 3.0F;
+// A tooltip is the same kind of surface as the popups gxde-wlcom blurs at
+// (iterations 3, offset 0.60) in src/view/treeland_personalization.c, so it
+// gets the same small offset.  The depth stays at the kernel default of 3.
+constexpr float kBlurOffset = 0.60F;
 
 bool IgnoreInput(wlr_scene_buffer*, double*, double*) { return false; }
 
@@ -71,8 +75,8 @@ TitlebarTooltip::TitlebarTooltip(wlr_scene_tree* overlay_parent,
       screen_geometry_(std::move(screen_geometry)),
       set_blur_(std::move(set_blur)),
       clear_blur_(std::move(clear_blur)) {
-  animation_ = std::make_unique<PopupAnimation>(
-      [this](double value, bool finished) {
+  animation_ =
+      std::make_unique<PopupAnimation>([this](double value, bool finished) {
         ApplyAnimationFrame(value, finished);
       });
   show_timer_.setSingleShot(true);
@@ -238,8 +242,8 @@ void TitlebarTooltip::ClearRegisteredBlur() {
   if (clear_blur_) clear_blur_(this);
 }
 
-void TitlebarTooltip::OnBlurNodeSample(
-    TitlebarTooltip* tooltip, wlr_scene_output_sample_event*) {
+void TitlebarTooltip::OnBlurNodeSample(TitlebarTooltip* tooltip,
+                                       wlr_scene_output_sample_event*) {
   if (!tooltip->visible_ || !tooltip->set_blur_ ||
       tooltip->blur_node_ == nullptr) {
     return;

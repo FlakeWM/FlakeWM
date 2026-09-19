@@ -22,9 +22,9 @@
  * Original code is modified to adapt C++ and Wlroots 0.20.2.
  */
 
-#include <new>
-
 #include "src/protocol/input_timestamps/input_timestamps_manager.h"
+
+#include <new>
 
 namespace flakewm {
 namespace protocol {

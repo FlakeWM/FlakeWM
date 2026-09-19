@@ -47,6 +47,7 @@ extern "C" {
 
 #include "absl/log/absl_log.h"
 #include "src/render/backdrop_blur_renderer.h"
+#include "src/render/blur_kernel.h"
 #include "src/render/vulkan_blur_pipeline.h"
 #include "src/utils/signal_listener.h"
 
@@ -72,12 +73,18 @@ precision mediump float;
 varying vec2 texcoord;
 uniform sampler2D image;
 uniform vec2 direction;
+uniform float tap_offset[64];
+uniform float tap_weight[64];
+uniform int tap_count;
 void main() {
-  vec4 color = texture2D(image, texcoord) * 0.2270270270;
-  color += texture2D(image, texcoord + direction * 1.3846153846) * 0.3162162162;
-  color += texture2D(image, texcoord - direction * 1.3846153846) * 0.3162162162;
-  color += texture2D(image, texcoord + direction * 3.2307692308) * 0.0702702703;
-  color += texture2D(image, texcoord - direction * 3.2307692308) * 0.0702702703;
+  vec4 color = vec4(0.0);
+  for (int i = 0; i < 64; ++i) {
+    if (i >= tap_count) {
+      break;
+    }
+    color += texture2D(image, texcoord + direction * tap_offset[i]) *
+             tap_weight[i];
+  }
   gl_FragColor = color;
 }
 )";
@@ -157,8 +164,8 @@ class BackdropBlurRenderer::Impl {
  public:
   struct SurfaceBlur {
     SurfaceBlur(wlr_surface* new_surface, const pixman_region32_t* new_region,
-                float new_offset)
-        : surface(new_surface), offset(new_offset) {
+                float new_offset, int new_iterations)
+        : surface(new_surface), offset(new_offset), iterations(new_iterations) {
       pixman_region32_init(&region);
       pixman_region32_copy(&region, new_region);
     }
@@ -168,12 +175,17 @@ class BackdropBlurRenderer::Impl {
     wlr_surface* surface;
     pixman_region32_t region;
     float offset;
+    int iterations;
   };
 
   struct TextureBlur {
     TextureBlur(const void* new_owner, wlr_texture* new_texture,
-                const pixman_region32_t* new_region, float new_offset)
-        : owner(new_owner), texture(new_texture), offset(new_offset) {
+                const pixman_region32_t* new_region, float new_offset,
+                int new_iterations)
+        : owner(new_owner),
+          texture(new_texture),
+          offset(new_offset),
+          iterations(new_iterations) {
       pixman_region32_init(&region);
       pixman_region32_copy(&region, new_region);
     }
@@ -184,6 +196,7 @@ class BackdropBlurRenderer::Impl {
     wlr_texture* texture;
     pixman_region32_t region;
     float offset;
+    int iterations;
   };
 
   struct SurfaceRoundCorner {
@@ -218,6 +231,17 @@ class BackdropBlurRenderer::Impl {
 
     pixman_region32_t opaque;
     std::array<pixman_region32_t, kCoverageLevels - 1> partial;
+  };
+
+  // One step of the blur chain: the level's image as a texture and as a draw
+  // target, and a second pair for the separable Gaussian to ping-pong through
+  // when this level is the coarse one.  Level 0 is the full output; every level
+  // after it is half the size of the one before.
+  struct GlLevel {
+    GLuint textures[2] = {};
+    GLuint framebuffers[2] = {};
+    int width = 0;
+    int height = 0;
   };
 
   struct RenderPass {
@@ -256,17 +280,18 @@ class BackdropBlurRenderer::Impl {
   }
 
   void SetSurfaceBlur(wlr_surface* surface, const pixman_region32_t* region,
-                      float offset) {
+                      float offset, int iterations) {
     auto found = std::find_if(
         surfaces.begin(), surfaces.end(),
         [surface](const auto& item) { return item->surface == surface; });
     if (found == surfaces.end()) {
       surfaces.push_back(
-          std::make_unique<SurfaceBlur>(surface, region, offset));
+          std::make_unique<SurfaceBlur>(surface, region, offset, iterations));
       return;
     }
     pixman_region32_copy(&(*found)->region, region);
     (*found)->offset = offset;
+    (*found)->iterations = iterations;
   }
 
   void ClearSurfaceBlur(wlr_surface* surface) {
@@ -302,18 +327,20 @@ class BackdropBlurRenderer::Impl {
   }
 
   void SetTextureBlur(const void* owner, wlr_texture* texture,
-                      const pixman_region32_t* region, float offset) {
+                      const pixman_region32_t* region, float offset,
+                      int iterations) {
     auto found = std::find_if(
         textures_blur.begin(), textures_blur.end(),
         [owner](const auto& item) { return item->owner == owner; });
     if (found == textures_blur.end()) {
-      textures_blur.push_back(
-          std::make_unique<TextureBlur>(owner, texture, region, offset));
+      textures_blur.push_back(std::make_unique<TextureBlur>(
+          owner, texture, region, offset, iterations));
       return;
     }
     (*found)->texture = texture;
     pixman_region32_copy(&(*found)->region, region);
     (*found)->offset = offset;
+    (*found)->iterations = iterations;
   }
 
   void ClearTextureBlur(const void* owner) {
@@ -595,6 +622,43 @@ class BackdropBlurRenderer::Impl {
     (void)force_blending;
   }
 
+  static bool CreateGlTarget(int width, int height, GlLevel* level) {
+    level->width = width;
+    level->height = height;
+    glGenTextures(2, level->textures);
+    glGenFramebuffers(2, level->framebuffers);
+    for (size_t i = 0; i < 2; ++i) {
+      glBindTexture(GL_TEXTURE_2D, level->textures[i]);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA,
+                   GL_UNSIGNED_BYTE, nullptr);
+      glBindFramebuffer(GL_FRAMEBUFFER, level->framebuffers[i]);
+      glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                             GL_TEXTURE_2D, level->textures[i], 0);
+      if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        ABSL_LOG(ERROR) << "Failed to allocate backdrop blur framebuffer";
+        DestroyGlTarget(level);
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static void DestroyGlTarget(GlLevel* level) {
+    glDeleteFramebuffers(2, level->framebuffers);
+    glDeleteTextures(2, level->textures);
+    *level = {};
+  }
+
+  void ReleaseGlTargets() {
+    for (GlLevel& level : levels) DestroyGlTarget(&level);
+    levels.clear();
+    target_width = target_height = 0;
+  }
+
   bool EnsureGlResources(int width, int height) {
     if (program == 0) {
       program = CreateProgram();
@@ -603,50 +667,53 @@ class BackdropBlurRenderer::Impl {
       }
       image_uniform = glGetUniformLocation(program, "image");
       direction_uniform = glGetUniformLocation(program, "direction");
+      tap_offset_uniform = glGetUniformLocation(program, "tap_offset");
+      tap_weight_uniform = glGetUniformLocation(program, "tap_weight");
+      tap_count_uniform = glGetUniformLocation(program, "tap_count");
       position_attribute = glGetAttribLocation(program, "pos");
+      if (image_uniform < 0 || direction_uniform < 0 ||
+          tap_offset_uniform < 0 || tap_weight_uniform < 0 ||
+          tap_count_uniform < 0) {
+        ABSL_LOG(ERROR) << "Backdrop blur shader is missing its uniforms";
+        return false;
+      }
     }
 
-    if (target_width == width && target_height == height && textures[0] != 0) {
+    if (target_width == width && target_height == height && !levels.empty()) {
       return true;
     }
 
-    glDeleteFramebuffers(2, framebuffers);
-    glDeleteTextures(2, textures);
-    framebuffers[0] = framebuffers[1] = 0;
-    textures[0] = textures[1] = 0;
-    target_width = target_height = 0;
-
-    glGenTextures(2, textures);
-    glGenFramebuffers(2, framebuffers);
-    for (size_t i = 0; i < 2; ++i) {
-      glBindTexture(GL_TEXTURE_2D, textures[i]);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA,
-                   GL_UNSIGNED_BYTE, nullptr);
-      glBindFramebuffer(GL_FRAMEBUFFER, framebuffers[i]);
-      glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                             GL_TEXTURE_2D, textures[i], 0);
-      if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-        ABSL_LOG(ERROR) << "Failed to allocate backdrop blur framebuffer";
-        glDeleteFramebuffers(2, framebuffers);
-        glDeleteTextures(2, textures);
-        framebuffers[0] = framebuffers[1] = 0;
-        textures[0] = textures[1] = 0;
+    ReleaseGlTargets();
+    // Every level is allocated, not just the ones the current blur needs: which
+    // level ends up coarse depends on the radius, and a blur with a shallower
+    // chain than the last one must not find itself half a chain's worth of
+    // geometry short.  The levels past the coarse one simply go unused, and
+    // together they cost a third of one full-resolution buffer.
+    for (int i = 0; i <= kBlurMaxLevels; ++i) {
+      GlLevel level;
+      if (!CreateGlTarget(std::max(width >> i, 1), std::max(height >> i, 1),
+                          &level)) {
+        ReleaseGlTargets();
         return false;
       }
+      levels.push_back(level);
     }
     target_width = width;
     target_height = height;
     return true;
   }
 
-  void DrawTexture(GLuint texture, GLuint framebuffer, float direction_x,
-                   float direction_y, const pixman_region32_t* clip) const {
+  // `texture` is sampled across the whole of `framebuffer`, which is `width` by
+  // `height`.  Passing a destination smaller than the source is a 2x2 box
+  // average and a larger one is a bilinear expand -- both are what a single
+  // full-canvas tap does with a linear filter, so the chain needs no shader of
+  // its own.  `clip` is in destination pixels and must be null for those.
+  void DrawTexture(GLuint texture, GLuint framebuffer, int width, int height,
+                   float direction_x, float direction_y,
+                   const pixman_region32_t* clip,
+                   const std::vector<BlurTap>& taps) const {
     glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
-    glViewport(0, 0, target_width, target_height);
+    glViewport(0, 0, width, height);
     glDisable(GL_BLEND);
     glDisable(GL_SCISSOR_TEST);
     glUseProgram(program);
@@ -654,11 +721,25 @@ class BackdropBlurRenderer::Impl {
     glBindTexture(GL_TEXTURE_2D, texture);
     glUniform1i(image_uniform, 0);
     glUniform2f(direction_uniform, direction_x, direction_y);
+    const GLsizei count = static_cast<GLsizei>(
+        std::min(taps.size(), static_cast<size_t>(kBlurMaxTaps)));
+    std::array<GLfloat, kBlurMaxTaps> offsets = {};
+    std::array<GLfloat, kBlurMaxTaps> weights = {};
+    for (GLsizei i = 0; i < count; ++i) {
+      offsets[static_cast<size_t>(i)] =
+          taps[static_cast<size_t>(i)].displacement;
+      weights[static_cast<size_t>(i)] = taps[static_cast<size_t>(i)].weight;
+    }
+    glUniform1i(tap_count_uniform, count);
+    if (count > 0) {
+      glUniform1fv(tap_offset_uniform, count, offsets.data());
+      glUniform1fv(tap_weight_uniform, count, weights.data());
+    }
     glEnableVertexAttribArray(position_attribute);
 
     pixman_region32_t full;
     if (clip == nullptr) {
-      pixman_region32_init_rect(&full, 0, 0, target_width, target_height);
+      pixman_region32_init_rect(&full, 0, 0, width, height);
       clip = &full;
     }
     int rectangle_count = 0;
@@ -667,10 +748,10 @@ class BackdropBlurRenderer::Impl {
     std::vector<GLfloat> vertices;
     vertices.reserve(static_cast<size_t>(rectangle_count) * 12);
     for (int i = 0; i < rectangle_count; ++i) {
-      const float x1 = static_cast<float>(rectangles[i].x1) / target_width;
-      const float y1 = static_cast<float>(rectangles[i].y1) / target_height;
-      const float x2 = static_cast<float>(rectangles[i].x2) / target_width;
-      const float y2 = static_cast<float>(rectangles[i].y2) / target_height;
+      const float x1 = static_cast<float>(rectangles[i].x1) / width;
+      const float y1 = static_cast<float>(rectangles[i].y1) / height;
+      const float x2 = static_cast<float>(rectangles[i].x2) / width;
+      const float y2 = static_cast<float>(rectangles[i].y2) / height;
       vertices.insert(vertices.end(),
                       {x1, y1, x2, y1, x1, y2, x2, y1, x2, y2, x1, y2});
     }
@@ -801,8 +882,8 @@ class BackdropBlurRenderer::Impl {
     return result;
   }
 
-  void ApplyRegionBlur(RenderPass* pass, pixman_region32_t* clip,
-                       float offset) {
+  void ApplyRegionBlur(RenderPass* pass, pixman_region32_t* clip, float offset,
+                       int iterations) {
     if (pixman_region32_empty(clip)) return;
 
     if (vulkan_blur != nullptr) {
@@ -813,7 +894,8 @@ class BackdropBlurRenderer::Impl {
         return;
       }
 
-      wlr_texture* blurred = vulkan_blur->Render(pass->target, offset);
+      wlr_texture* blurred =
+          vulkan_blur->Render(pass->target, offset, iterations);
       pass->inner = wlr_renderer_begin_buffer_pass(inner, pass->target,
                                                    &pass->intermediate_options);
       if (pass->inner == nullptr) {
@@ -821,6 +903,12 @@ class BackdropBlurRenderer::Impl {
         return;
       }
       if (blurred != nullptr) {
+        // `blurred` is a level-0 buffer that a Vulkan pass wrote, so it holds
+        // the same encoding as everything else the Vulkan renderer produces and
+        // this draw undoes and redoes that encoding exactly as any other
+        // texture draw does -- see the note on DrawShiftedSample in
+        // vulkan_blur_pipeline.cc.  The transfer function here is not a
+        // separate choice; it matches the pass this lands in.
         const wlr_render_texture_options blur_options = {
             .texture = blurred,
             .dst_box =
@@ -840,6 +928,9 @@ class BackdropBlurRenderer::Impl {
       return;
     }
 
+    const float safe_offset = std::clamp(offset, 0.001F, 64.0F);
+    const BlurPlan plan = PlanBlur(SigmaForBlurOffset(safe_offset, iterations));
+
     GLint output_framebuffer = 0;
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &output_framebuffer);
     if (!EnsureGlResources(pass->target->width, pass->target->height)) {
@@ -847,20 +938,47 @@ class BackdropBlurRenderer::Impl {
       return;
     }
 
+    // A tap that is not displaced resamples the source at the destination's
+    // pixel centres; for the halvings and expansions of the chain that is all
+    // the shader has to do.
+    const std::vector<BlurTap> resample = {{0.0F, 1.0F}};
+
     glBindFramebuffer(GL_FRAMEBUFFER, output_framebuffer);
-    glBindTexture(GL_TEXTURE_2D, textures[0]);
+    glBindTexture(GL_TEXTURE_2D, levels[0].textures[0]);
     glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, target_width,
                         target_height);
-    const float safe_offset = std::clamp(offset, 0.001F, 64.0F);
-    const float horizontal = safe_offset / target_width;
-    const float vertical = safe_offset / target_height;
-    constexpr uint32_t kIterations = 3;
-    for (uint32_t i = 0; i < kIterations; ++i) {
-      DrawTexture(textures[0], framebuffers[1], horizontal, 0, nullptr);
-      DrawTexture(textures[1], framebuffers[0], 0, vertical, nullptr);
+
+    for (int i = 0; i < plan.levels; ++i) {
+      const GlLevel& source = levels[static_cast<size_t>(i)];
+      const GlLevel& destination = levels[static_cast<size_t>(i) + 1];
+      DrawTexture(source.textures[0], destination.framebuffers[0],
+                  destination.width, destination.height, 0.0F, 0.0F, nullptr,
+                  resample);
     }
-    DrawTexture(textures[0], static_cast<GLuint>(output_framebuffer), 0, 0,
-                clip);
+
+    // One horizontal and one vertical pass at the coarse level: this is the
+    // only step whose tap count grows with the radius, and it now runs over a
+    // fraction of the pixels.  `direction` converts the pixel displacements to
+    // texture coordinates.
+    const GlLevel& coarse = levels[static_cast<size_t>(plan.levels)];
+    const std::vector<BlurTap> taps = BuildBlurTaps(plan.sigma);
+    DrawTexture(coarse.textures[0], coarse.framebuffers[1], coarse.width,
+                coarse.height, 1.0F / static_cast<float>(coarse.width), 0.0F,
+                nullptr, taps);
+    DrawTexture(coarse.textures[1], coarse.framebuffers[0], coarse.width,
+                coarse.height, 0.0F, 1.0F / static_cast<float>(coarse.height),
+                nullptr, taps);
+
+    for (int i = plan.levels - 1; i >= 0; --i) {
+      const GlLevel& source = levels[static_cast<size_t>(i) + 1];
+      const GlLevel& destination = levels[static_cast<size_t>(i)];
+      DrawTexture(source.textures[0], destination.framebuffers[0],
+                  destination.width, destination.height, 0.0F, 0.0F, nullptr,
+                  resample);
+    }
+
+    DrawTexture(levels[0].textures[0], static_cast<GLuint>(output_framebuffer),
+                target_width, target_height, 0.0F, 0.0F, clip, resample);
     glBindFramebuffer(GL_FRAMEBUFFER, output_framebuffer);
     glViewport(0, 0, target_width, target_height);
     glBindTexture(GL_TEXTURE_2D, 0);
@@ -879,7 +997,7 @@ class BackdropBlurRenderer::Impl {
       if (pass->rendered_blurs.insert(blur.surface).second) {
         pixman_region32_t clip = SurfaceRegion(
             blur, *options, pass->target->width, pass->target->height);
-        ApplyRegionBlur(pass, &clip, blur.offset);
+        ApplyRegionBlur(pass, &clip, blur.offset, blur.iterations);
         pixman_region32_fini(&clip);
       }
       // DTK surfaces can advertise their full buffer as opaque despite using
@@ -898,7 +1016,7 @@ class BackdropBlurRenderer::Impl {
     pass->rendered_texture_blurs.insert(blur.owner);
     pixman_region32_t clip = TextureRegion(blur, *options, pass->target->width,
                                            pass->target->height);
-    ApplyRegionBlur(pass, &clip, blur.offset);
+    ApplyRegionBlur(pass, &clip, blur.offset, blur.iterations);
     pixman_region32_fini(&clip);
     return false;
   }
@@ -916,8 +1034,7 @@ class BackdropBlurRenderer::Impl {
     if (eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE,
                        wlr_egl_get_context(egl)) == EGL_TRUE) {
       glDeleteProgram(program);
-      glDeleteFramebuffers(2, framebuffers);
-      glDeleteTextures(2, textures);
+      ReleaseGlTargets();
       if (previous_display != EGL_NO_DISPLAY) {
         eglMakeCurrent(previous_display, previous_draw, previous_read,
                        previous_context);
@@ -926,8 +1043,6 @@ class BackdropBlurRenderer::Impl {
       }
     }
     program = 0;
-    framebuffers[0] = framebuffers[1] = 0;
-    textures[0] = textures[1] = 0;
   }
 
   wlr_renderer base = {};
@@ -939,9 +1054,11 @@ class BackdropBlurRenderer::Impl {
   GLuint program = 0;
   GLint image_uniform = -1;
   GLint direction_uniform = -1;
+  GLint tap_offset_uniform = -1;
+  GLint tap_weight_uniform = -1;
+  GLint tap_count_uniform = -1;
   GLint position_attribute = -1;
-  GLuint textures[2] = {};
-  GLuint framebuffers[2] = {};
+  std::vector<GlLevel> levels;
   int target_width = 0;
   int target_height = 0;
 
@@ -1000,9 +1117,9 @@ void BackdropBlurRenderer::SetAllocator(wlr_allocator* allocator) {
 
 void BackdropBlurRenderer::SetSurfaceBlur(wlr_surface* surface,
                                           const pixman_region32_t* region,
-                                          float offset) {
+                                          float offset, int iterations) {
   if (surface != nullptr && region != nullptr) {
-    impl_->SetSurfaceBlur(surface, region, offset);
+    impl_->SetSurfaceBlur(surface, region, offset, iterations);
   }
 }
 
@@ -1022,9 +1139,9 @@ void BackdropBlurRenderer::ClearSurfaceRoundCorner(wlr_surface* surface) {
 void BackdropBlurRenderer::SetTextureBlur(const void* owner,
                                           wlr_texture* texture,
                                           const pixman_region32_t* region,
-                                          float offset) {
+                                          float offset, int iterations) {
   if (owner != nullptr && texture != nullptr && region != nullptr) {
-    impl_->SetTextureBlur(owner, texture, region, offset);
+    impl_->SetTextureBlur(owner, texture, region, offset, iterations);
   }
 }
 

@@ -42,31 +42,24 @@ extern "C" {
 #include <memory>
 
 #include "absl/log/absl_log.h"
+#include "src/render/blur_kernel.h"
 #include "src/render/vulkan_blur_pipeline.h"
 
 namespace flakewm {
 namespace render {
 namespace {
 
-struct BlurTap {
-  float displacement;
-  float weight;
-};
-
-// Gaussian kernel from GLES2 shader
-constexpr std::array<BlurTap, 5> kBlurTaps = {{
-    {0.0F, 0.2270270270F},
-    {1.3846153846F, 0.3162162162F},
-    {-1.3846153846F, 0.3162162162F},
-    {3.2307692308F, 0.0702702703F},
-    {-3.2307692308F, 0.0702702703F},
-}};
-
 constexpr std::array<uint32_t, 4> kBufferFormats = {
     DRM_FORMAT_ARGB8888,
     DRM_FORMAT_ABGR8888,
     DRM_FORMAT_XRGB8888,
     DRM_FORMAT_XBGR8888,
+};
+
+// A width and a height, so that a call site cannot transpose them.
+struct BlurSize {
+  int width;
+  int height;
 };
 
 }  // namespace
@@ -106,9 +99,14 @@ class VulkanBlurPipeline::Impl {
                        });
   }
 
-  wlr_texture* Render(wlr_buffer* source, float offset) {
-    if (source == nullptr || source->width <= 0 || source->height <= 0 ||
-        !EnsureTargets(source->width, source->height)) {
+  wlr_texture* Render(wlr_buffer* source, float offset, int iterations) {
+    if (source == nullptr || source->width <= 0 || source->height <= 0) {
+      return nullptr;
+    }
+
+    const float safe_offset = std::clamp(offset, 0.001F, 64.0F);
+    const BlurPlan plan = PlanBlur(SigmaForBlurOffset(safe_offset, iterations));
+    if (!EnsureTargets(source->width, source->height)) {
       return nullptr;
     }
 
@@ -118,30 +116,110 @@ class VulkanBlurPipeline::Impl {
       return nullptr;
     }
 
-    const float safe_offset = std::clamp(offset, 0.001F, 64.0F);
-    bool success =
-        DrawConvolution(source_texture, targets[0].buffer, safe_offset, 0.0F);
+    // Halve the source down to the level the Gaussian runs at, blur there, and
+    // expand back up.  A Gaussian is separable, so the two passes of that
+    // middle step are one horizontal and one vertical convolution; the halvings
+    // and expansions need no shader of their own, because a full-canvas draw
+    // with a linear filter is exactly the 2x2 average on the way down and the
+    // bilinear interpolation on the way back.
+    const Target& coarse = levels[static_cast<size_t>(plan.levels)];
+    const BlurSize coarse_size = {coarse.buffer->width, coarse.buffer->height};
+    bool success = true;
+    wlr_texture* finer = source_texture;
+    for (int i = 1; i <= plan.levels && success; ++i) {
+      const Target& destination = levels[static_cast<size_t>(i)];
+      success = Blit(finer, destination.buffer);
+      finer = destination.texture;
+    }
+    if (success) {
+      wlr_texture* blur_source =
+          plan.levels == 0 ? source_texture : coarse.texture;
+      // The scratch is a full-resolution buffer that the coarse level borrows
+      // the corner of, so the passes are told the coarse size rather than the
+      // buffer's.
+      success = DrawConvolution(blur_source, scratch.buffer, coarse_size,
+                                plan.sigma, true) &&
+                DrawConvolution(scratch.texture, coarse.buffer, coarse_size,
+                                plan.sigma, false);
+    }
+    for (int i = plan.levels - 1; i >= 0 && success; --i) {
+      success = Blit(levels[static_cast<size_t>(i) + 1].texture,
+                     levels[static_cast<size_t>(i)].buffer);
+    }
+
     wlr_texture_destroy(source_texture);
-    if (!success) {
-      return nullptr;
-    }
-    success = DrawConvolution(targets[0].texture, targets[1].buffer, 0.0F,
-                              safe_offset);
-    constexpr uint32_t kIterations = 3;
-    for (uint32_t iteration = 1; success && iteration < kIterations;
-         ++iteration) {
-      success = DrawConvolution(targets[1].texture, targets[0].buffer,
-                                safe_offset, 0.0F) &&
-                DrawConvolution(targets[0].texture, targets[1].buffer, 0.0F,
-                                safe_offset);
-    }
-    return success ? targets[1].texture : nullptr;
+    return success ? levels[0].texture : nullptr;
   }
 
  private:
+  // Draws `source` across the whole of `destination`, which need not be the
+  // same size: a smaller destination is a 2x2 box average and a larger one a
+  // bilinear expand.
+  bool Blit(wlr_texture* source, wlr_buffer* destination) const {
+    wlr_render_pass* pass =
+        wlr_renderer_begin_buffer_pass(renderer, destination, nullptr);
+    if (pass == nullptr) {
+      ABSL_LOG(ERROR) << "Failed to begin Vulkan backdrop blur pass";
+      return false;
+    }
+    const float alpha = 1.0F;
+    const wlr_render_texture_options options = {
+        .texture = source,
+        .src_box =
+            {
+                .x = 0,
+                .y = 0,
+                .width = static_cast<double>(source->width),
+                .height = static_cast<double>(source->height),
+            },
+        .dst_box =
+            {
+                .x = 0,
+                .y = 0,
+                .width = destination->width,
+                .height = destination->height,
+            },
+        .alpha = &alpha,
+        .filter_mode = WLR_SCALE_FILTER_BILINEAR,
+        .blend_mode = WLR_RENDER_BLEND_MODE_NONE,
+    };
+    wlr_render_pass_add_texture(pass, &options);
+    if (!wlr_render_pass_submit(pass)) {
+      ABSL_LOG(ERROR) << "Failed to submit Vulkan backdrop blur pass";
+      return false;
+    }
+    return true;
+  }
+
+  bool CreateTarget(int width, int height, const wlr_drm_format* format,
+                    Target* target) {
+    target->buffer =
+        wlr_allocator_create_buffer(allocator, width, height, format);
+    if (target->buffer == nullptr) {
+      return false;
+    }
+    target->texture = wlr_texture_from_buffer(renderer, target->buffer);
+    return target->texture != nullptr;
+  }
+
+  // Every level is allocated, not just the ones the current blur needs, and the
+  // scratch stays at full resolution whatever the coarse level turns out to be.
+  // Both matter: which level is coarse depends on the radius, and a blur with a
+  // shallower chain than the last one must not find itself half a chain's worth
+  // of geometry short.  The levels past the coarse one simply go unused, and
+  // together they cost a third of one full-resolution buffer.
+  bool CreateTargets(const wlr_drm_format* format, int width, int height) {
+    for (int i = 0; i <= kBlurMaxLevels; ++i) {
+      if (!CreateTarget(std::max(width >> i, 1), std::max(height >> i, 1),
+                        format, &levels.emplace_back())) {
+        return false;
+      }
+    }
+    return CreateTarget(width, height, format, &scratch);
+  }
+
   bool EnsureTargets(int width, int height) {
-    if (targets[0].buffer != nullptr && target_width == width &&
-        target_height == height) {
+    if (target_width == width && target_height == height && !levels.empty()) {
       return true;
     }
     ClearTargets();
@@ -156,17 +234,7 @@ class VulkanBlurPipeline::Impl {
       if (format == nullptr) {
         continue;
       }
-      targets[0].buffer =
-          wlr_allocator_create_buffer(allocator, width, height, format);
-      targets[1].buffer =
-          wlr_allocator_create_buffer(allocator, width, height, format);
-      if (targets[0].buffer == nullptr || targets[1].buffer == nullptr) {
-        ClearTargets();
-        continue;
-      }
-      targets[0].texture = wlr_texture_from_buffer(renderer, targets[0].buffer);
-      targets[1].texture = wlr_texture_from_buffer(renderer, targets[1].buffer);
-      if (targets[0].texture == nullptr || targets[1].texture == nullptr) {
+      if (!CreateTargets(format, width, height)) {
         ClearTargets();
         continue;
       }
@@ -187,8 +255,13 @@ class VulkanBlurPipeline::Impl {
     return implementation->get_render_formats(renderer);
   }
 
+  // `size` is the size of the image being convolved, which is the whole of
+  // `source` but only the corner of a full-resolution `destination`.  `sigma`
+  // is in pixels of *that* image, so it is the plan's coarse sigma, not the one
+  // the caller asked for -- the levels the source was halved through already
+  // carry the rest of it.
   bool DrawConvolution(wlr_texture* source, wlr_buffer* destination,
-                       float horizontal, float vertical) const {
+                       BlurSize size, float sigma, bool horizontal) const {
     wlr_render_pass* pass =
         wlr_renderer_begin_buffer_pass(renderer, destination, nullptr);
     if (pass == nullptr) {
@@ -201,8 +274,8 @@ class VulkanBlurPipeline::Impl {
             {
                 .x = 0,
                 .y = 0,
-                .width = target_width,
-                .height = target_height,
+                .width = size.width,
+                .height = size.height,
             },
         .color = {},
         .blend_mode = WLR_RENDER_BLEND_MODE_NONE,
@@ -210,14 +283,12 @@ class VulkanBlurPipeline::Impl {
     wlr_render_pass_add_rect(pass, &clear);
 
     float accumulated_weight = 0.0F;
-    for (const BlurTap& tap : kBlurTaps) {
+    const std::vector<BlurTap> taps = BuildBlurTaps(sigma);
+    for (const BlurTap& tap : taps) {
       accumulated_weight += tap.weight;
       const float alpha = tap.weight / accumulated_weight;
-      const int shift_x =
-          static_cast<int>(std::lround(tap.displacement * horizontal));
-      const int shift_y =
-          static_cast<int>(std::lround(tap.displacement * vertical));
-      DrawShiftedSample(pass, source, shift_x, shift_y, alpha);
+      DrawShiftedSample(pass, source, size, horizontal, tap.displacement,
+                        alpha);
     }
     if (!wlr_render_pass_submit(pass)) {
       ABSL_LOG(ERROR) << "Failed to submit Vulkan backdrop blur pass";
@@ -227,16 +298,39 @@ class VulkanBlurPipeline::Impl {
   }
 
   void DrawShiftedSample(wlr_render_pass* pass, wlr_texture* source,
-                         int shift_x, int shift_y, float alpha) const {
-    const int dimension = shift_x == 0 ? target_height : target_width;
-    const int shift = shift_x == 0 ? shift_y : shift_x;
-    const int amount = std::min(std::abs(shift), dimension);
+                         BlurSize size, bool horizontal, float shift,
+                         float alpha) const {
+    const int width = size.width;
+    const int height = size.height;
+    const int dimension = horizontal ? width : height;
+    const float magnitude =
+        std::min(std::abs(shift), static_cast<float>(dimension));
+    // The destination box is integral, so the shifted content is drawn across
+    // whole pixels while the fractional part rides in the source box, where the
+    // sampler interpolates it.  Shifting the source by `magnitude - edge` and
+    // covering the remaining `edge` pixels with a stretched edge column keeps
+    // the source box inside the texture and the mapping 1:1.
+    const int edge =
+        std::min(static_cast<int>(std::ceil(magnitude)), dimension);
+    const int content = dimension - edge;
 
     auto add_sample = [pass, source, &alpha](const wlr_fbox& source_box,
                                              const wlr_box& destination_box) {
       if (destination_box.width <= 0 || destination_box.height <= 0) {
         return;
       }
+      // The transfer function is not a choice this file gets to make.  Vulkan's
+      // renderer composites in linear light: a draw de-gammas what it samples
+      // (texture.frag, `pow(rgb, 2.2)`) and the pass that targets the buffer
+      // re-encodes on the way out (output.frag, `pow(rgb, 1/2.2)`, selected by
+      // the default GAMMA22 pass transform), so the weights below accumulate in
+      // linear light and the result lands in the buffer in the same encoding it
+      // was read in.  Naming GAMMA22 explicitly says the same thing the default
+      // would -- wlroots treats an unset transfer function as GAMMA22 anyway --
+      // and it is why this backend blurs in linear space while the GLES2 one,
+      // which has no such pass, blurs in sRGB.  Each matches the compositing
+      // around it; making them agree would put one of them out of step with
+      // every other surface on screen.
       const wlr_render_texture_options options = {
           .texture = source,
           .src_box = source_box,
@@ -249,102 +343,88 @@ class VulkanBlurPipeline::Impl {
       wlr_render_pass_add_texture(pass, &options);
     };
 
-    if (shift_x == 0 && shift_y == 0) {
-      add_sample(
-          {.x = 0,
-           .y = 0,
-           .width = static_cast<double>(target_width),
-           .height = static_cast<double>(target_height)},
-          {.x = 0, .y = 0, .width = target_width, .height = target_height});
+    if (shift == 0.0F) {
+      add_sample({.x = 0,
+                  .y = 0,
+                  .width = static_cast<double>(width),
+                  .height = static_cast<double>(height)},
+                 {.x = 0, .y = 0, .width = width, .height = height});
       return;
     }
 
-    if (shift_x != 0) {
-      const int content_width = target_width - amount;
-      if (shift_x > 0) {
-        add_sample(
-            {.x = static_cast<double>(amount),
-             .y = 0,
-             .width = static_cast<double>(content_width),
-             .height = static_cast<double>(target_height)},
-            {.x = 0, .y = 0, .width = content_width, .height = target_height});
-        add_sample({.x = static_cast<double>(target_width - 1),
+    if (horizontal) {
+      if (shift > 0.0F) {
+        add_sample({.x = static_cast<double>(magnitude),
+                    .y = 0,
+                    .width = static_cast<double>(content),
+                    .height = static_cast<double>(height)},
+                   {.x = 0, .y = 0, .width = content, .height = height});
+        add_sample({.x = static_cast<double>(width - 1),
                     .y = 0,
                     .width = 1,
-                    .height = static_cast<double>(target_height)},
-                   {.x = content_width,
-                    .y = 0,
-                    .width = amount,
-                    .height = target_height});
+                    .height = static_cast<double>(height)},
+                   {.x = content, .y = 0, .width = edge, .height = height});
       } else {
-        add_sample({.x = 0,
-                    .y = 0,
-                    .width = static_cast<double>(content_width),
-                    .height = static_cast<double>(target_height)},
-                   {.x = amount,
-                    .y = 0,
-                    .width = content_width,
-                    .height = target_height});
-        add_sample({.x = 0,
-                    .y = 0,
-                    .width = 1,
-                    .height = static_cast<double>(target_height)},
-                   {.x = 0, .y = 0, .width = amount, .height = target_height});
+        add_sample(
+            {.x = static_cast<double>(edge) - static_cast<double>(magnitude),
+             .y = 0,
+             .width = static_cast<double>(content),
+             .height = static_cast<double>(height)},
+            {.x = edge, .y = 0, .width = content, .height = height});
+        add_sample(
+            {.x = 0, .y = 0, .width = 1, .height = static_cast<double>(height)},
+            {.x = 0, .y = 0, .width = edge, .height = height});
       }
       return;
     }
 
-    const int content_height = target_height - amount;
-    if (shift_y > 0) {
+    if (shift > 0.0F) {
+      add_sample({.x = 0,
+                  .y = static_cast<double>(magnitude),
+                  .width = static_cast<double>(width),
+                  .height = static_cast<double>(content)},
+                 {.x = 0, .y = 0, .width = width, .height = content});
+      add_sample({.x = 0,
+                  .y = static_cast<double>(height - 1),
+                  .width = static_cast<double>(width),
+                  .height = 1},
+                 {.x = 0, .y = content, .width = width, .height = edge});
+    } else {
       add_sample(
           {.x = 0,
-           .y = static_cast<double>(amount),
-           .width = static_cast<double>(target_width),
-           .height = static_cast<double>(content_height)},
-          {.x = 0, .y = 0, .width = target_width, .height = content_height});
-      add_sample({.x = 0,
-                  .y = static_cast<double>(target_height - 1),
-                  .width = static_cast<double>(target_width),
-                  .height = 1},
-                 {.x = 0,
-                  .y = content_height,
-                  .width = target_width,
-                  .height = amount});
-    } else {
-      add_sample({.x = 0,
-                  .y = 0,
-                  .width = static_cast<double>(target_width),
-                  .height = static_cast<double>(content_height)},
-                 {.x = 0,
-                  .y = amount,
-                  .width = target_width,
-                  .height = content_height});
-      add_sample({.x = 0,
-                  .y = 0,
-                  .width = static_cast<double>(target_width),
-                  .height = 1},
-                 {.x = 0, .y = 0, .width = target_width, .height = amount});
+           .y = static_cast<double>(edge) - static_cast<double>(magnitude),
+           .width = static_cast<double>(width),
+           .height = static_cast<double>(content)},
+          {.x = 0, .y = edge, .width = width, .height = content});
+      add_sample(
+          {.x = 0, .y = 0, .width = static_cast<double>(width), .height = 1},
+          {.x = 0, .y = 0, .width = width, .height = edge});
+    }
+  }
+
+  static void DestroyTarget(Target* target) {
+    if (target->texture != nullptr) {
+      wlr_texture_destroy(target->texture);
+      target->texture = nullptr;
+    }
+    if (target->buffer != nullptr) {
+      wlr_buffer_drop(target->buffer);
+      target->buffer = nullptr;
     }
   }
 
   void ClearTargets() {
-    for (Target& target : targets) {
-      if (target.texture != nullptr) {
-        wlr_texture_destroy(target.texture);
-        target.texture = nullptr;
-      }
-      if (target.buffer != nullptr) {
-        wlr_buffer_drop(target.buffer);
-        target.buffer = nullptr;
-      }
-    }
+    for (Target& target : levels) DestroyTarget(&target);
+    levels.clear();
+    DestroyTarget(&scratch);
     target_width = 0;
     target_height = 0;
   }
 
   wlr_renderer* renderer = nullptr;
   wlr_allocator* allocator = nullptr;
-  std::array<Target, 2> targets = {};
+  std::vector<Target> levels;
+  Target scratch;
   int target_width = 0;
   int target_height = 0;
 };
@@ -369,8 +449,9 @@ void VulkanBlurPipeline::SetAllocator(wlr_allocator* allocator) {
 
 bool VulkanBlurPipeline::IsSupported() const { return impl_->IsSupported(); }
 
-wlr_texture* VulkanBlurPipeline::Render(wlr_buffer* source, float offset) {
-  return impl_->Render(source, offset);
+wlr_texture* VulkanBlurPipeline::Render(wlr_buffer* source, float offset,
+                                        int iterations) {
+  return impl_->Render(source, offset, iterations);
 }
 
 }  // namespace render

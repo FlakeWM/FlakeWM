@@ -54,8 +54,7 @@ class TitlebarTooltip final {
   TitlebarTooltip(const TitlebarTooltip&) = delete;
   TitlebarTooltip& operator=(const TitlebarTooltip&) = delete;
 
-  void Hover(wlr_surface* surface, Hint hint, double cursor_x,
-             double cursor_y);
+  void Hover(wlr_surface* surface, Hint hint, double cursor_x, double cursor_y);
   void SurfaceUnavailable(wlr_surface* surface);
   void Cancel();
   void Render();

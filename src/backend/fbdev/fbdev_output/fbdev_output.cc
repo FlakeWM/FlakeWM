@@ -22,6 +22,8 @@
  * Original code is modified to adapt C++ and Wlroots 0.20.2.
  */
 
+#include "src/backend/fbdev/fbdev_output/fbdev_output.h"
+
 #include <absl/log/absl_log.h>
 #include <drm_fourcc.h>
 #include <fcntl.h>
@@ -40,7 +42,6 @@
 #include <utility>
 
 #include "src/backend/fbdev/fbdev_backend/fbdev_backend.h"
-#include "src/backend/fbdev/fbdev_output/fbdev_output.h"
 
 namespace flakewm {
 namespace backend {

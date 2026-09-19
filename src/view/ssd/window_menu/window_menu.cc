@@ -21,6 +21,8 @@
  * Now re-licensed under GPLv3.
  */
 
+#include "src/view/ssd/window_menu/window_menu.h"
+
 #include <linux/input-event-codes.h>
 #include <xkbcommon/xkbcommon-keysyms.h>
 
@@ -30,7 +32,6 @@
 #include <cmath>
 #include <utility>
 
-#include "src/view/ssd/window_menu/window_menu.h"
 #include "src/view/ssd/ssd_buffer/ssd_buffer.h"
 #include "src/view/ssd/window_menu/window_menu_renderer.h"
 
@@ -38,7 +39,11 @@ namespace flakewm {
 namespace view {
 namespace {
 
-constexpr float kBlurOffset = 3.0F;
+// Menus in gxde-wlcom are blurred at (iterations 3, offset 0.60), per
+// src/widget/menu.c, which notes that a bigger offset is a coarser pass and
+// shows against a background this translucent.  The depth stays at the kernel
+// default of 3.
+constexpr float kBlurOffset = 0.60F;
 
 bool IgnoreInput(wlr_scene_buffer*, double*, double*) { return false; }
 
@@ -122,12 +127,12 @@ bool WindowMenu::Show(wlr_surface* surface, double x, double y) {
   const int minimum_y = screen.y - WindowMenuRenderer::kShadowMargin;
   const int maximum_x = screen.x + screen.width - WindowMenuRenderer::kWidth;
   const int maximum_y = screen.y + screen.height - WindowMenuRenderer::kHeight;
-  x_ = std::clamp(static_cast<int>(std::lround(x)) -
-                      WindowMenuRenderer::kShadowMargin,
-                  minimum_x, std::max(minimum_x, maximum_x));
-  y_ = std::clamp(static_cast<int>(std::lround(y)) -
-                      WindowMenuRenderer::kShadowMargin,
-                  minimum_y, std::max(minimum_y, maximum_y));
+  x_ = std::clamp(
+      static_cast<int>(std::lround(x)) - WindowMenuRenderer::kShadowMargin,
+      minimum_x, std::max(minimum_x, maximum_x));
+  y_ = std::clamp(
+      static_cast<int>(std::lround(y)) - WindowMenuRenderer::kShadowMargin,
+      minimum_y, std::max(minimum_y, maximum_y));
   pointer_target_ = ItemAt(x, y);
   hovered_index_ = pointer_target_ >= 0 ? pointer_target_ : -1;
   pressed_index_ = -1;
@@ -147,8 +152,7 @@ bool WindowMenu::HandleMotion(double x, double y) {
   return true;
 }
 
-bool WindowMenu::HandleButton(uint32_t button,
-                              wl_pointer_button_state state) {
+bool WindowMenu::HandleButton(uint32_t button, wl_pointer_button_state state) {
   if (!active_) return false;
   if (button != BTN_LEFT) {
     if (state == WL_POINTER_BUTTON_STATE_PRESSED) Cancel();
@@ -163,10 +167,9 @@ bool WindowMenu::HandleButton(uint32_t button,
     UpdateView();
     return true;
   }
-  const int selected =
-      pressed_index_ >= 0 && pressed_index_ == hovered_index_
-          ? pressed_index_
-          : -1;
+  const int selected = pressed_index_ >= 0 && pressed_index_ == hovered_index_
+                           ? pressed_index_
+                           : -1;
   pressed_index_ = -1;
   if (selected >= 0) {
     Activate(selected);
@@ -185,8 +188,7 @@ bool WindowMenu::HandleKey(wlr_keyboard* keyboard,
   // Alt+F3 is registered by KeyBindingManager. Let its release reach the
   // manager so the no-repeat key bookkeeping is cleared while the menu owns
   // the rest of the keyboard grab.
-  if (event.state == WL_KEYBOARD_KEY_STATE_RELEASED &&
-      symbol == XKB_KEY_F3) {
+  if (event.state == WL_KEYBOARD_KEY_STATE_RELEASED && symbol == XKB_KEY_F3) {
     return false;
   }
   if (event.state == WL_KEYBOARD_KEY_STATE_PRESSED) {
@@ -234,8 +236,8 @@ void WindowMenu::RebuildItems(const State& state) {
       {Action::kToggleKeepAbove, true, state.kept_above, true},
       {Action::kToggleAllWorkspaces, true, state.all_workspaces, true},
       {Action::kMoveWorkspaceLeft, state.workspace > 0, false, false},
-      {Action::kMoveWorkspaceRight,
-       state.workspace + 1 < state.workspace_count, false, false},
+      {Action::kMoveWorkspaceRight, state.workspace + 1 < state.workspace_count,
+       false, false},
       {Action::kClose, true, false, false},
   };
 
@@ -348,12 +350,12 @@ void WindowMenu::OnBlurNodeSample(WindowMenu* menu,
     int inset = 0;
     if (row < radius) {
       const double dy = static_cast<double>(radius - row) - 0.5;
-      inset = static_cast<int>(std::ceil(
-          radius - std::sqrt(radius * radius - dy * dy)));
+      inset = static_cast<int>(
+          std::ceil(radius - std::sqrt(radius * radius - dy * dy)));
     } else if (row >= height - radius) {
       const double dy = static_cast<double>(row - (height - radius)) + 0.5;
-      inset = static_cast<int>(std::ceil(
-          radius - std::sqrt(radius * radius - dy * dy)));
+      inset = static_cast<int>(
+          std::ceil(radius - std::sqrt(radius * radius - dy * dy)));
     }
     pixman_region32_union_rect(&region, &region, x + inset, y + row,
                                std::max(0, width - 2 * inset), 1);

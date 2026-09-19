@@ -21,6 +21,8 @@
  * Now re-licensed under GPLv3.
  */
 
+#include "src/view/ssd/popup_renderer/popup_renderer.h"
+
 #include <absl/log/absl_log.h>
 
 #include <QCoreApplication>
@@ -32,7 +34,6 @@
 #include <QQuickWindow>
 #include <QUrl>
 
-#include "src/view/ssd/popup_renderer/popup_renderer.h"
 #include "src/view/ssd/ssd_buffer/ssd_buffer.h"
 
 namespace flakewm {
@@ -67,12 +68,12 @@ PopupRenderer::PopupRenderer(const char* resource_url)
   window_->setColor(Qt::transparent);
   window_->create();
   initialized_ = true;
-  render_requested_ = QObject::connect(
-      render_control_.get(), &QQuickRenderControl::renderRequested,
-      [this]() { dirty_ = true; });
-  scene_changed_ = QObject::connect(
-      render_control_.get(), &QQuickRenderControl::sceneChanged,
-      [this]() { dirty_ = true; });
+  render_requested_ = QObject::connect(render_control_.get(),
+                                       &QQuickRenderControl::renderRequested,
+                                       [this]() { dirty_ = true; });
+  scene_changed_ = QObject::connect(render_control_.get(),
+                                    &QQuickRenderControl::sceneChanged,
+                                    [this]() { dirty_ = true; });
 }
 
 PopupRenderer::~PopupRenderer() {

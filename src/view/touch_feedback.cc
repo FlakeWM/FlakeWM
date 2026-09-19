@@ -23,6 +23,8 @@
  * Original code is modified to adapt C++ and Wlroots 0.20.2.
  */
 
+#include "src/view/touch_feedback.h"
+
 #include <absl/log/absl_log.h>
 
 #include <QCoreApplication>
@@ -43,7 +45,6 @@
 #include <memory>
 
 #include "src/view/ssd/ssd_buffer/ssd_buffer.h"
-#include "src/view/touch_feedback.h"
 
 namespace flakewm {
 namespace view {

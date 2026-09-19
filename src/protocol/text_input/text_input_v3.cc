@@ -22,9 +22,9 @@
  * Original code is modified to adapt C++ and Wlroots 0.20.2.
  */
 
-#include <string>
-
 #include "src/protocol/text_input/text_input_v3.h"
+
+#include <string>
 
 namespace flakewm {
 namespace protocol {

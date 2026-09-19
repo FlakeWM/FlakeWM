@@ -21,6 +21,8 @@
  * Now re-licensed under GPLv3.
  */
 
+#include "src/view/ssd/window_menu/window_menu_renderer.h"
+
 #include <absl/log/absl_log.h>
 
 #include <QCoreApplication>
@@ -34,7 +36,6 @@
 #include <QQuickWindow>
 #include <QUrl>
 
-#include "src/view/ssd/window_menu/window_menu_renderer.h"
 #include "src/view/ssd/ssd_buffer/ssd_buffer.h"
 
 namespace flakewm {
@@ -70,9 +71,9 @@ WindowMenuRenderer::WindowMenuRenderer()
   window_->setGeometry(0, 0, kWidth, kHeight);
   window_->contentItem()->setSize(QSizeF(kWidth, kHeight));
   root_item_->setSize(QSizeF(kWidth, kHeight));
-  SetProperty("darkMode",
-              QGuiApplication::palette().color(QPalette::Window).lightness() <
-                  128);
+  SetProperty(
+      "darkMode",
+      QGuiApplication::palette().color(QPalette::Window).lightness() < 128);
 
   buffers_[0] = SsdBuffer::Create(kWidth, kHeight);
   buffers_[1] = SsdBuffer::Create(kWidth, kHeight);
@@ -82,12 +83,12 @@ WindowMenuRenderer::WindowMenuRenderer()
   }
   window_->create();
   initialized_ = true;
-  render_requested_ = QObject::connect(
-      render_control_.get(), &QQuickRenderControl::renderRequested,
-      [this]() { dirty_ = true; });
-  scene_changed_ = QObject::connect(
-      render_control_.get(), &QQuickRenderControl::sceneChanged,
-      [this]() { dirty_ = true; });
+  render_requested_ = QObject::connect(render_control_.get(),
+                                       &QQuickRenderControl::renderRequested,
+                                       [this]() { dirty_ = true; });
+  scene_changed_ = QObject::connect(render_control_.get(),
+                                    &QQuickRenderControl::sceneChanged,
+                                    [this]() { dirty_ = true; });
 }
 
 WindowMenuRenderer::~WindowMenuRenderer() {

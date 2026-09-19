@@ -41,8 +41,7 @@ class TileAnimation final {
   TileAnimation(const TileAnimation&) = delete;
   TileAnimation& operator=(const TileAnimation&) = delete;
 
-  bool Start(wlr_scene_tree* source, const wlr_box& from,
-             const wlr_box& to);
+  bool Start(wlr_scene_tree* source, const wlr_box& from, const wlr_box& to);
   void SourceUnavailable(wlr_scene_tree* source);
   void Cancel();
 
@@ -63,8 +62,7 @@ class TileAnimation final {
 
   void Update();
   void Complete(bool restore_source);
-  static void CaptureBuffer(wlr_scene_buffer* buffer, int x, int y,
-                            void* data);
+  static void CaptureBuffer(wlr_scene_buffer* buffer, int x, int y, void* data);
 
   wlr_scene_tree* overlay_parent_ = nullptr;
   wlr_scene_tree* snapshot_tree_ = nullptr;

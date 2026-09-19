@@ -19,6 +19,8 @@
  * The layout is adapted from GXDE KWin's Multitasking screen.
  */
 
+#include "src/view/multitasking/multitasking_renderer.h"
+
 #include <absl/log/absl_log.h>
 
 #include <QCoreApplication>
@@ -34,7 +36,6 @@
 
 #include "src/view/ssd/ssd_buffer/ssd_buffer.h"
 #include "src/view/ssd/window_icon_provider/window_icon_provider.h"
-#include "src/view/multitasking/multitasking_renderer.h"
 
 namespace flakewm {
 namespace view {

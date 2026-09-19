@@ -45,7 +45,7 @@ class VulkanBlurPipeline final {
 
   // The returned texture remains owned by this pipeline and is valid until
   // the allocator changes, the render size changes, or the pipeline dies.
-  wlr_texture* Render(wlr_buffer* source, float offset);
+  wlr_texture* Render(wlr_buffer* source, float offset, int iterations);
 
  private:
   class Impl;

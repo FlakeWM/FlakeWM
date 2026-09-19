@@ -21,10 +21,10 @@
  * Now re-licensed under GPLv3.
  */
 
+#include "src/view/ssd/split_screen_switcher/tile_animation.h"
+
 #include <algorithm>
 #include <cmath>
-
-#include "src/view/ssd/split_screen_switcher/tile_animation.h"
 
 namespace flakewm {
 namespace view {
@@ -92,8 +92,8 @@ void TileAnimation::Cancel() { Complete(true); }
 
 void TileAnimation::Update() {
   if (snapshot_tree_ == nullptr) return;
-  const double raw = std::clamp(
-      static_cast<double>(clock_.elapsed()) / kDurationMs, 0.0, 1.0);
+  const double raw =
+      std::clamp(static_cast<double>(clock_.elapsed()) / kDurationMs, 0.0, 1.0);
   const double progress = Ease(raw);
   const int x = Interpolate(from_.x, to_.x, progress);
   const int y = Interpolate(from_.y, to_.y, progress);
@@ -103,10 +103,8 @@ void TileAnimation::Update() {
   const double scale_x = static_cast<double>(width) / from_.width;
   const double scale_y = static_cast<double>(height) / from_.height;
   for (const Snapshot& snapshot : snapshots_) {
-    const int node_x =
-        x + static_cast<int>(std::lround(snapshot.x * scale_x));
-    const int node_y =
-        y + static_cast<int>(std::lround(snapshot.y * scale_y));
+    const int node_x = x + static_cast<int>(std::lround(snapshot.x * scale_x));
+    const int node_y = y + static_cast<int>(std::lround(snapshot.y * scale_y));
     const int node_width =
         std::max(1, static_cast<int>(std::lround(snapshot.width * scale_x)));
     const int node_height =
@@ -145,12 +143,10 @@ void TileAnimation::CaptureBuffer(wlr_scene_buffer* buffer, int x, int y,
   wlr_scene_buffer_set_transform(clone, buffer->transform);
   wlr_scene_buffer_set_filter_mode(clone, buffer->filter_mode);
   wlr_scene_buffer_set_opacity(clone, buffer->opacity);
-  const int width = buffer->dst_width > 0
-                        ? buffer->dst_width
-                        : buffer->WLR_PRIVATE.buffer_width;
-  const int height = buffer->dst_height > 0
-                         ? buffer->dst_height
-                         : buffer->WLR_PRIVATE.buffer_height;
+  const int width = buffer->dst_width > 0 ? buffer->dst_width
+                                          : buffer->WLR_PRIVATE.buffer_width;
+  const int height = buffer->dst_height > 0 ? buffer->dst_height
+                                            : buffer->WLR_PRIVATE.buffer_height;
   context->animation->snapshots_.push_back({
       .node = clone,
       .x = x - context->origin_x,
