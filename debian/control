@@ -1,0 +1,56 @@
+Source: flakewm
+Section: x11
+Priority: optional
+Maintainer: CharOfString <root@charofstring.cc>
+Build-Depends:
+ debhelper-compat (= 13),
+ cmake (>= 3.21),
+ meson,
+ ninja-build,
+ pkg-config,
+ patchelf,
+ qt6-base-dev (>= 6.8.0),
+ qt6-declarative-dev (>= 6.8.0),
+ wayland-protocols (>= 1.47),
+ libwayland-bin,
+ xwayland,
+ libwayland-dev,
+ libdrm-dev,
+ libpixman-1-dev,
+ libxkbcommon-dev (>= 1.8.0),
+ libegl1-mesa-dev,
+ libgbm-dev,
+ libgles2-mesa-dev,
+ libvulkan-dev,
+ liblcms2-dev,
+ libudev-dev,
+ libseat-dev (>= 0.2.0),
+ libdisplay-info-dev (>= 0.2.0),
+ libinput-dev (>= 1.19.0),
+ libxcb1-dev,
+ libxcb-composite0-dev,
+ libxcb-dri3-dev,
+ libxcb-errors-dev,
+ libxcb-ewmh-dev,
+ libxcb-icccm4-dev,
+ libxcb-present-dev,
+ libxcb-render0-dev,
+ libxcb-render-util0-dev,
+ libxcb-res0-dev,
+ libxcb-shm0-dev,
+ libxcb-xfixes0-dev,
+ libxcb-xinput-dev,
+ libffi-dev,
+ libexpat1-dev
+Standards-Version: 4.7.0
+Homepage: https://github.com/FlakeWM/FlakeWM
+Vcs-Git: https://github.com/FlakeWM/FlakeWM.git
+Vcs-Browser: https://github.com/FlakeWM/FlakeWM
+
+Package: flakewm
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends}
+Recommends: xwayland
+Description: Wlroots-based Wayland compositor for the Deepin/GXDE desktop.

@@ -1,0 +1,5 @@
+flakewm (0.1.0) unstable; urgency=medium
+
+  * Initial Debian packaging.
+
+ -- CharOfString <root@charofstring.cc>  Fri, 19 Sep 2026 10:00:00 +0800

@@ -1,0 +1,84 @@
+name: Build DEB packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref, branch or tag to build (empty = default branch)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: debian-13
+            container: debian:13
+            backports: trixie-backports
+          - name: ubuntu-26.04
+            container: ubuntu:26.04
+            backports: ''
+          - name: deepin-25
+            container: linuxdeepin/deepin:25
+            backports: ''
+    container:
+      image: ${{ matrix.container }}
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Configure apt and install base tooling
+        run: |
+          set -eux
+          if [ -n "${{ matrix.backports }}" ]; then
+            # wlroots 0.20 needs xkbcommon >= 1.8 and wayland-protocols >= 1.47,
+            # newer than Debian 13 ships; pull those from backports.
+            echo "deb http://deb.debian.org/debian ${{ matrix.backports }} main" \
+              > /etc/apt/sources.list.d/backports.list
+          fi
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates tar git fakeroot \
+            build-essential debhelper devscripts equivs dpkg-dev patchelf
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Install build dependencies
+        run: |
+          set -eux
+          # Pre-install the backported versions that satisfy wlroots' version
+          # constraints, so mk-build-deps sees them as already satisfied.
+          if [ -n "${{ matrix.backports }}" ]; then
+            apt-get install -y -t "${{ matrix.backports }}" \
+              libxkbcommon-dev wayland-protocols
+          fi
+          # gsettings-qt6 (touchpad settings) is optional and not packaged on
+          # every distro; use it where available.
+          apt-get install -y --no-install-recommends libgsettings-qt6-dev || true
+          mk-build-deps debian/control
+          apt-get install -y ./flakewm-build-deps_*.deb
+          rm -f flakewm-build-deps_*.deb
+
+      - name: Build binary package
+        run: |
+          set -eux
+          dpkg-buildpackage -b -uc -us
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          find .. -maxdepth 2 \( -name '*.deb' -o -name '*.buildinfo' -o -name '*.changes' \) \
+            -exec mv -t "$GITHUB_WORKSPACE/artifacts" {} +
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: flakewm-${{ matrix.name }}
+          path: artifacts/
+          if-no-files-found: error

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=FlakeWM
+Comment=Wlroots-based Wayland compositor for the Deepin/GXDE desktop
+Exec=flakewm
+TryExec=flakewm
+DesktopNames=Deepin;GXDE;
