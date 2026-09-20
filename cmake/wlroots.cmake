@@ -251,9 +251,26 @@ else()
   )
 
   set(WLROOTS_VENDOR_XKBCOMMON_PREFIX "${WLROOTS_VENDOR_PREFIX}/xkbcommon")
+  # xkbcommon's meson.build probes for -Wl,--version-script by linking an
+  # *executable* (not a DSO); that probe returns a false negative on the GXDE
+  # riscv64 CI, so libxkbcommon is built there without symbol versions.
+  # Consumers linked against a versioned libxkbcommon (e.g. libQt6Gui.so.6.8.2)
+  # then fail with `undefined reference to xkb_state_key_get_level@V_0.5.0',
+  # since an unversioned definition does not satisfy a versioned reference.
+  # libs/xkbcommon is vendored (upstream-pristine) and must not be modified, so
+  # copy it into the build tree and force have_version_script=true on the copy.
+  set(WLROOTS_VENDOR_XKBCOMMON_SRC "${CMAKE_BINARY_DIR}/_deps/xkbcommon-src")
   ExternalProject_Add(wlroots_vendor_xkbcommon
-    SOURCE_DIR "${FLAKEWM_ROOT_DIR}/libs/xkbcommon"
+    SOURCE_DIR "${WLROOTS_VENDOR_XKBCOMMON_SRC}"
     BINARY_DIR "${CMAKE_BINARY_DIR}/_deps/xkbcommon-build"
+    DOWNLOAD_COMMAND
+      ${CMAKE_COMMAND} -E copy_directory
+        "${FLAKEWM_ROOT_DIR}/libs/xkbcommon"
+        "${WLROOTS_VENDOR_XKBCOMMON_SRC}"
+    PATCH_COMMAND
+      ${CMAKE_COMMAND}
+        -DXKBCOMMON_SRC=<SOURCE_DIR>
+        -P "${CMAKE_CURRENT_LIST_DIR}/force_xkbcommon_version_script.cmake"
     CONFIGURE_COMMAND
       "${MESON_EXECUTABLE}" setup
       "<BINARY_DIR>"
