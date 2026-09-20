@@ -137,6 +137,14 @@ class PersonalizationGlobal final : public TreelandGlobal {
     static void OnMap(WindowContext* context, void*) { context->Apply(); }
     static void OnCommit(WindowContext* context, void*) { context->Apply(); }
     static void OnSurfaceDestroy(WindowContext* context, void*) {
+      // The surface is going away; drop its blur registration before clearing
+      // `surface`, otherwise the backdrop-blur renderer keeps a dangling
+      // wlr_surface* whose stale entry can match an unrelated texture and smear
+      // blur across the whole output (seen when a DTK menu closes after
+      // clicking outside the window).
+      if (context->surface != nullptr) {
+        context->global->owner_->SetBlur(context->surface, false);
+      }
       context->map.Disconnect();
       context->commit.Disconnect();
       context->destroy.Disconnect();
@@ -206,6 +214,19 @@ class PersonalizationGlobal final : public TreelandGlobal {
   }
 
   bool IsValid() const override { return disabled_ || global_ != nullptr; }
+
+  bool ClientHasWindowContext(wl_client* client) const override {
+    if (client == nullptr) {
+      return false;
+    }
+    for (const WindowContext* context : windows_) {
+      if (context->resource != nullptr &&
+          wl_resource_get_client(context->resource) == client) {
+        return true;
+      }
+    }
+    return false;
+  }
 
  private:
   static void DestroyRequest(wl_client*, wl_resource* resource) {

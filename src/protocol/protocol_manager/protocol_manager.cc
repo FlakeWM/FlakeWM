@@ -494,6 +494,15 @@ bool ProtocolManager::WantsTearing(wlr_surface* surface) const {
              WP_TEARING_CONTROL_V1_PRESENTATION_HINT_ASYNC;
 }
 
+bool ProtocolManager::ClientHasWindowContext(wlr_surface* surface) const {
+  return treeland_protocols_ != nullptr &&
+         treeland_protocols_->ClientHasWindowContext(surface);
+}
+
+bool ProtocolManager::IsDarkTheme() const {
+  return treeland_protocols_ != nullptr && treeland_protocols_->IsDarkTheme();
+}
+
 bool ProtocolManager::ShortcutsInhibited() const {
   if (shortcuts_manager_ == nullptr || seat_ == nullptr) {
     return false;

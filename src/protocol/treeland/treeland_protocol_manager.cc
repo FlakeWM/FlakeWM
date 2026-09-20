@@ -52,6 +52,15 @@ bool TreelandProtocolManager::Create(wl_display* display, wlr_seat* seat,
   return impl_->Create(display, seat, output_layout);
 }
 
+bool TreelandProtocolManager::ClientHasWindowContext(
+    wlr_surface* surface) const {
+  return impl_->ClientHasWindowContext(surface);
+}
+
+bool TreelandProtocolManager::IsDarkTheme() const {
+  return impl_->IsDarkTheme();
+}
+
 TreelandProtocolManagerImpl::TreelandProtocolManagerImpl(
     core::CompositorPrivate* compositor, ProtocolManager* protocol_manager)
     : compositor(compositor), protocol_manager(protocol_manager) {}
@@ -261,6 +270,20 @@ bool TreelandProtocolManagerImpl::SurfaceGeometry(wlr_surface* surface,
   geometry->x += toplevel->scene_tree->node.x;
   geometry->y += toplevel->scene_tree->node.y;
   return geometry->width > 0 && geometry->height > 0;
+}
+
+bool TreelandProtocolManagerImpl::ClientHasWindowContext(
+    wlr_surface* surface) const {
+  if (surface == nullptr || surface->resource == nullptr) {
+    return false;
+  }
+  wl_client* client = wl_resource_get_client(surface->resource);
+  for (const auto& global : globals) {
+    if (global->ClientHasWindowContext(client)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 }  // namespace protocol

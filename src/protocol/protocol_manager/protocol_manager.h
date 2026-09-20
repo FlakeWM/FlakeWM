@@ -82,6 +82,8 @@ class ProtocolManager final {
   }
   bool ShouldForwardAxis(const wlr_pointer_axis_event& event) const;
   bool WantsTearing(wlr_surface* surface) const;
+  bool ClientHasWindowContext(wlr_surface* surface) const;
+  bool IsDarkTheme() const;
   bool ShortcutsInhibited() const;
   bool SessionLocked() const;
   bool ConfinePointer(double* delta_x, double* delta_y) const;

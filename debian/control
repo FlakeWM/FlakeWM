@@ -4,6 +4,7 @@ Priority: optional
 Maintainer: CharOfString <root@charofstring.cc>
 Build-Depends:
  debhelper-compat (= 13),
+ bison,
  cmake (>= 3.21),
  meson,
  ninja-build,
@@ -11,13 +12,13 @@ Build-Depends:
  patchelf,
  qt6-base-dev (>= 6.8.0),
  qt6-declarative-dev (>= 6.8.0),
- wayland-protocols (>= 1.47),
+ wayland-protocols,
  libwayland-bin,
  xwayland,
  libwayland-dev,
  libdrm-dev,
  libpixman-1-dev,
- libxkbcommon-dev (>= 1.8.0),
+ libxkbcommon-dev,
  libegl1-mesa-dev,
  libgbm-dev,
  libgles2-mesa-dev,

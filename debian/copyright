@@ -11,9 +11,9 @@ Files: libs/*
 Copyright: various authors, see libs/README.md
 License: GPL-3.0+ and MIT and Apache-2.0
 Comment: Third-party libraries vendored under libs/ are linked into the
- flakewm binary. wlroots, wayland, libdrm and pixman are MIT-licensed;
- abseil-cpp is Apache-2.0; waylib is GPL-3.0-only. See libs/README.md for
- exact versions and upstream sources.
+ flakewm binary. wlroots, wayland, wayland-protocols, libdrm, pixman and
+ xkbcommon are MIT-licensed; abseil-cpp is Apache-2.0; waylib is GPL-3.0-only.
+ See libs/README.md for exact versions and upstream sources.
 
 License: GPL-3.0+
  This program is free software: you can redistribute it and/or modify

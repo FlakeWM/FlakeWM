@@ -41,11 +41,11 @@ pkg_check_modules(FLAKEWM_SYSTEM_WAYLAND_CLIENT QUIET wayland-client)
 pkg_check_modules(FLAKEWM_SYSTEM_WAYLAND_SCANNER QUIET wayland-scanner)
 pkg_check_modules(FLAKEWM_SYSTEM_LIBDRM QUIET libdrm)
 pkg_check_modules(FLAKEWM_SYSTEM_PIXMAN QUIET pixman-1)
+pkg_check_modules(FLAKEWM_SYSTEM_XKBCOMMON QUIET xkbcommon)
+pkg_check_modules(FLAKEWM_SYSTEM_WAYLAND_PROTOCOLS QUIET wayland-protocols)
 
 # Everything not vendored by this project remains a hard system dependency.
 pkg_check_modules(WLROOTS_REQUIRED_SYSTEM_DEPS REQUIRED
-  xkbcommon>=1.8.0
-  wayland-protocols>=1.47
   egl
   gbm>=21.1
   glesv2
@@ -237,6 +237,96 @@ else()
   )
 endif()
 
+if(FLAKEWM_SYSTEM_XKBCOMMON_FOUND AND
+   NOT FLAKEWM_SYSTEM_XKBCOMMON_VERSION VERSION_LESS "1.8.0")
+  message(STATUS
+    "FLAKEWM: using system xkbcommon ${FLAKEWM_SYSTEM_XKBCOMMON_VERSION}"
+  )
+else()
+  _flakewm_vendor_fallback_warning(
+    "xkbcommon"
+    "${FLAKEWM_SYSTEM_XKBCOMMON_VERSION}"
+    ">= 1.8.0"
+    "${FLAKEWM_ROOT_DIR}/libs/xkbcommon"
+  )
+
+  set(WLROOTS_VENDOR_XKBCOMMON_PREFIX "${WLROOTS_VENDOR_PREFIX}/xkbcommon")
+  ExternalProject_Add(wlroots_vendor_xkbcommon
+    SOURCE_DIR "${FLAKEWM_ROOT_DIR}/libs/xkbcommon"
+    BINARY_DIR "${CMAKE_BINARY_DIR}/_deps/xkbcommon-build"
+    CONFIGURE_COMMAND
+      "${MESON_EXECUTABLE}" setup
+      "<BINARY_DIR>"
+      "<SOURCE_DIR>"
+      "--prefix=${WLROOTS_VENDOR_XKBCOMMON_PREFIX}"
+      "--libdir=lib"
+      "--buildtype=debugoptimized"
+      "--wrap-mode=nodownload"
+      "-Denable-tools=false"
+      "-Denable-x11=false"
+      "-Denable-wayland=false"
+      "-Denable-xkbregistry=false"
+      "-Denable-docs=false"
+      "-Denable-bash-completion=false"
+    # Build only the library target: unlike wayland/pixman there is no
+    # `tests` option, and `meson compile` would otherwise build the whole
+    # test suite as part of the default target.
+    BUILD_COMMAND "${MESON_EXECUTABLE}" compile -C "<BINARY_DIR>" xkbcommon
+    INSTALL_COMMAND "${MESON_EXECUTABLE}" install -C "<BINARY_DIR>"
+    BUILD_ALWAYS TRUE
+    BUILD_BYPRODUCTS
+      "${WLROOTS_VENDOR_XKBCOMMON_PREFIX}/lib/libxkbcommon.so"
+  )
+  list(APPEND WLROOTS_VENDOR_DEPENDENCY_TARGETS wlroots_vendor_xkbcommon)
+  list(APPEND WLROOTS_VENDOR_PKGCONFIG_DIRS
+    "${WLROOTS_VENDOR_XKBCOMMON_PREFIX}/lib/pkgconfig"
+  )
+  list(APPEND WLROOTS_RUNTIME_LIBRARY_DIRS
+    "${WLROOTS_VENDOR_XKBCOMMON_PREFIX}/lib"
+  )
+endif()
+
+if(FLAKEWM_SYSTEM_WAYLAND_PROTOCOLS_FOUND AND
+   NOT FLAKEWM_SYSTEM_WAYLAND_PROTOCOLS_VERSION VERSION_LESS "1.47")
+  message(STATUS
+    "FLAKEWM: using system wayland-protocols "
+    "${FLAKEWM_SYSTEM_WAYLAND_PROTOCOLS_VERSION}"
+  )
+else()
+  _flakewm_vendor_fallback_warning(
+    "wayland-protocols"
+    "${FLAKEWM_SYSTEM_WAYLAND_PROTOCOLS_VERSION}"
+    ">= 1.47"
+    "${FLAKEWM_ROOT_DIR}/libs/wayland-protocols"
+  )
+
+  set(WLROOTS_VENDOR_WAYLAND_PROTOCOLS_PREFIX
+    "${WLROOTS_VENDOR_PREFIX}/wayland-protocols"
+  )
+  ExternalProject_Add(wlroots_vendor_wayland_protocols
+    SOURCE_DIR "${FLAKEWM_ROOT_DIR}/libs/wayland-protocols"
+    BINARY_DIR "${CMAKE_BINARY_DIR}/_deps/wayland-protocols-build"
+    CONFIGURE_COMMAND
+      "${MESON_EXECUTABLE}" setup
+      "<BINARY_DIR>"
+      "<SOURCE_DIR>"
+      "--prefix=${WLROOTS_VENDOR_WAYLAND_PROTOCOLS_PREFIX}"
+      "--libdir=lib"
+      "--buildtype=debugoptimized"
+      "--wrap-mode=nodownload"
+      "-Dtests=false"
+    BUILD_COMMAND "${MESON_EXECUTABLE}" compile -C "<BINARY_DIR>"
+    INSTALL_COMMAND "${MESON_EXECUTABLE}" install -C "<BINARY_DIR>"
+    BUILD_ALWAYS TRUE
+    BUILD_BYPRODUCTS
+      "${WLROOTS_VENDOR_WAYLAND_PROTOCOLS_PREFIX}/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml"
+  )
+  list(APPEND WLROOTS_VENDOR_DEPENDENCY_TARGETS wlroots_vendor_wayland_protocols)
+  list(APPEND WLROOTS_VENDOR_PKGCONFIG_DIRS
+    "${WLROOTS_VENDOR_WAYLAND_PROTOCOLS_PREFIX}/share/pkgconfig"
+  )
+endif()
+
 set(WLROOTS_VERSION 0.20.2)
 set(WLROOTS_VERSION_MAJOR 0)
 set(WLROOTS_VERSION_MINOR 20)
@@ -388,6 +478,28 @@ Name: Pixman
 Description: FLAKEWM compatibility fallback
 Version: 0.46.4
 Libs: -L\${libdir} -lpixman-1
+Cflags: -I\${includedir}
+")
+endif()
+
+if(NOT (FLAKEWM_SYSTEM_XKBCOMMON_FOUND AND
+        NOT FLAKEWM_SYSTEM_XKBCOMMON_VERSION VERSION_LESS "1.8.0"))
+  file(MAKE_DIRECTORY
+    "${WLROOTS_VENDOR_XKBCOMMON_PREFIX}/include/xkbcommon"
+    "${WLROOTS_VENDOR_XKBCOMMON_PREFIX}/lib"
+  )
+  file(WRITE "${WLROOTS_LINK_STUB_DIR}/libxkbcommon.so"
+    "INPUT(${WLROOTS_VENDOR_XKBCOMMON_PREFIX}/lib/libxkbcommon.so)\n"
+  )
+  file(WRITE "${WLROOTS_PKGCONFIG_DIR}/xkbcommon.pc"
+"prefix=${WLROOTS_VENDOR_XKBCOMMON_PREFIX}
+libdir=${WLROOTS_LINK_STUB_DIR}
+includedir=\${prefix}/include
+
+Name: xkbcommon
+Description: FLAKEWM compatibility fallback
+Version: 1.8.0
+Libs: -L\${libdir} -lxkbcommon
 Cflags: -I\${includedir}
 ")
 endif()

@@ -38,6 +38,7 @@
 #include "src/utils/signal_listener.h"
 #include "src/view/app_switcher/app_switcher.h"
 #include "src/view/multitasking/multitasking.h"
+#include "src/view/ssd/popup_shadow/popup_shadow.h"
 #include "src/view/ssd/split_screen_switcher/split_screen_switcher.h"
 #include "src/view/ssd/split_screen_switcher/tile_animation.h"
 #include "src/view/ssd/ssd/ssd.h"
@@ -292,6 +293,7 @@ class CompositorPrivate final {
     CompositorPrivate* compositor;
     wlr_xdg_popup* handle;
     wlr_scene_tree* scene_tree = nullptr;
+    std::unique_ptr<view::PopupShadow> shadow;
     utils::SignalListener<Popup, void> commit;
     utils::SignalListener<Popup, void> destroy;
   };

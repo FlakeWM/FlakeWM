@@ -32,6 +32,24 @@
 * **Clone date**: Tue Aug 25 13:02:40 +0800
 * **License**: [MIT License](./pixman/COPYING)
 
+## XKBCommon
+* **Upstream**: https://github.com/xkbcommon/libxkbcommon
+* **Tag**: `xkbcommon-1.8.0`
+* **Commit ID**: `76740e0c4583ae49675e7ba8213d31ee09aa00d2`
+* **Commit date**: Thu Jan 30 13:21:00 2025 +0000
+* **Clone date**: Fri Sep 19 22:50:42 2026 -0500
+* **License**: [MIT License](./xkbcommon/LICENSE)
+* **Note**: GXDE OS 25 (Trixie-based)'s `libxkbcommon` 1.7.0 is older than Wlroots 0.20's `>=1.8.0`, so it is vendored as a fallback.
+
+## Wayland Protocols
+* **Upstream**: https://gitlab.freedesktop.org/wayland/wayland-protocols
+* **Tag**: `1.47`
+* **Commit ID**: `88223018d1b578d0d8869866da66d9608e05f928`
+* **Commit date**: Mon Dec 15 16:16:01 2025 +0100
+* **Clone date**: Fri Sep 19 22:50:42 2026 -0500
+* **License**: [MIT License](./wayland-protocols/COPYING)
+* **Note**: Trixie's `wayland-protocols` 1.44 is older than Wlroots 0.20's `>=1.47`, so it is vendored as a fallback.
+
 ## Waylib
 * **Upstream**: https://github.com/linuxdeepin/treeland
 * **Tag**: N/A, pulling from main

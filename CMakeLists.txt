@@ -51,7 +51,19 @@ find_path(QGSETTINGS_QT6_INCLUDE_DIR NAMES QGSettings/qgsettings.h
 find_library(QGSETTINGS_QT6_LIBRARY NAMES gsettings-qt6)
 find_program(XWAYLAND_EXECUTABLE NAMES Xwayland REQUIRED)
 find_program(WAYLAND_SCANNER_EXECUTABLE NAMES wayland-scanner REQUIRED)
-pkg_get_variable(WAYLAND_PROTOCOLS_DATA_DIR wayland-protocols pkgdatadir)
+# Prefer the system wayland-protocols XML tree. When it is older than wlroots
+# needs (or absent), cmake/wlroots.cmake builds a vendored fallback — but that
+# install tree does not exist at configure time, so read the in-tree source
+# copy (which shares the stable/staging/unstable layout with the installed
+# pkgdatadir) directly instead.
+if(FLAKEWM_SYSTEM_WAYLAND_PROTOCOLS_FOUND AND
+   NOT FLAKEWM_SYSTEM_WAYLAND_PROTOCOLS_VERSION VERSION_LESS "1.47")
+  pkg_get_variable(WAYLAND_PROTOCOLS_DATA_DIR wayland-protocols pkgdatadir)
+else()
+  set(WAYLAND_PROTOCOLS_DATA_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/libs/wayland-protocols"
+  )
+endif()
 
 set(FLAKEWM_PROTOCOL_DIR "${CMAKE_CURRENT_BINARY_DIR}/protocol")
 file(MAKE_DIRECTORY "${FLAKEWM_PROTOCOL_DIR}")
@@ -240,6 +252,7 @@ set(flakewm_CXX_SOURCES
   src/view/ssd/ssd_buffer/ssd_buffer.cc
   src/view/ssd/popup_renderer/popup_animation.cc
   src/view/ssd/popup_renderer/popup_renderer.cc
+  src/view/ssd/popup_shadow/popup_shadow.cc
   src/view/ssd/ssd_renderer/ssd_renderer.cc
   src/view/ssd/ssd_shadow/ssd_shadow.cc
   src/view/ssd/ssd_surface_clip/ssd_surface_clip.cc
@@ -318,6 +331,7 @@ add_executable(flakewm
   src/view/ssd/ssd_buffer/ssd_buffer.h
   src/view/ssd/popup_renderer/popup_animation.h
   src/view/ssd/popup_renderer/popup_renderer.h
+  src/view/ssd/popup_shadow/popup_shadow.h
   src/view/ssd/ssd_renderer/ssd_renderer.h
   src/view/ssd/ssd_shadow/ssd_shadow.h
   src/view/ssd/ssd_surface_clip/ssd_surface_clip.h

@@ -1458,6 +1458,11 @@ void CompositorPrivate::Toplevel::OnMap(Toplevel* toplevel, void*) {
   if (toplevel->RequestedMaximized() && toplevel->CanManage()) {
     toplevel->compositor->SetMaximized(toplevel, true);
   }
+  if (toplevel->RequestedFullscreen()) {
+    toplevel->SetFullscreenState(true);
+    toplevel->compositor->RebuildSurfaceClip(toplevel);
+    toplevel->compositor->UpdateCsdShadow(toplevel);
+  }
   if (toplevel->WantsFocus()) {
     toplevel->compositor->FocusToplevel(toplevel);
   }
@@ -1585,7 +1590,12 @@ void CompositorPrivate::Toplevel::OnCommit(Toplevel* toplevel, void*) {
 }
 
 void CompositorPrivate::Toplevel::OnRequestMaximize(Toplevel* toplevel, void*) {
-  // Apply the state requested by the client.
+  // A client may request the state before its first commit; wlroots caches it
+  // in `requested` and OnMap applies it. Applying here would schedule a
+  // configure on an uninitialized surface, which wlroots asserts against.
+  if (toplevel->handle == nullptr || !toplevel->handle->base->initialized) {
+    return;
+  }
   if (toplevel->CanManage()) {
     toplevel->compositor->SetMaximized(
         toplevel, toplevel->CanMaximize() && toplevel->RequestedMaximized());
@@ -1601,6 +1611,11 @@ void CompositorPrivate::Toplevel::OnRequestMinimize(Toplevel* toplevel, void*) {
 
 void CompositorPrivate::Toplevel::OnRequestFullscreen(Toplevel* toplevel,
                                                       void*) {
+  // Same as maximize: an early request is cached in `requested` and applied on
+  // map, so never schedule a configure before the surface is initialized.
+  if (toplevel->handle == nullptr || !toplevel->handle->base->initialized) {
+    return;
+  }
   toplevel->SetFullscreenState(toplevel->RequestedFullscreen());
   toplevel->compositor->RebuildSurfaceClip(toplevel);
   toplevel->compositor->UpdateCsdShadow(toplevel);
@@ -1747,6 +1762,13 @@ void CompositorPrivate::Popup::OnCommit(Popup* popup, void*) {
   if (popup->handle != nullptr && popup->handle->base->initial_commit) {
     wlr_xdg_surface_schedule_configure(popup->handle->base);
   }
+  // Keep the compositor-drawn shadow/border sized to the popup's content box.
+  // The popup tree origin coincides with the xdg geometry origin, so the
+  // content box is at (0, 0, width, height) in its coordinates.
+  if (popup->handle != nullptr && popup->shadow != nullptr) {
+    const wlr_box geometry = popup->handle->base->geometry;
+    popup->shadow->Update({0, 0, geometry.width, geometry.height});
+  }
 }
 
 void CompositorPrivate::Popup::OnDestroy(Popup* popup, void*) {
@@ -1754,6 +1776,7 @@ void CompositorPrivate::Popup::OnDestroy(Popup* popup, void*) {
   if (popup->handle != nullptr && popup->handle->base != nullptr) {
     popup->compositor->ClearSurfaceRoundCorner(popup->handle->base->surface);
   }
+  popup->shadow.reset();
   popup->commit.Disconnect();
   popup->destroy.Disconnect();
   popup->handle = nullptr;
@@ -4004,6 +4027,15 @@ void CompositorPrivate::OnNewPopup(CompositorPrivate* compositor,
   // when the client only requests blur. Keep this independent from the parent
   // toplevel so an in-process menu receives the same mask as its blur.
   compositor->SetSurfaceRoundCorner(handle->base->surface, 8);
+  // DTK5/6 menus delegate their border and shadow to the compositor through a
+  // personalization window context; DTK2 menus draw their own client-side and
+  // must be left alone (gxde-wlcom's client_has_window_context gate).
+  if (compositor->protocol_manager_ != nullptr &&
+      compositor->protocol_manager_->ClientHasWindowContext(
+          handle->base->surface)) {
+    popup->shadow = std::make_unique<view::PopupShadow>(popup->scene_tree);
+    popup->shadow->SetDark(compositor->protocol_manager_->IsDarkTheme());
+  }
   popup->commit.Connect(&handle->base->surface->events.commit);
   popup->destroy.Connect(&handle->events.destroy);
   compositor->popups_.push_back(std::move(popup));

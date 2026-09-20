@@ -53,6 +53,9 @@ class TreelandProtocolManager final {
   bool Create(wl_display* display, wlr_seat* seat,
               wlr_output_layout* output_layout);
 
+  bool ClientHasWindowContext(wlr_surface* surface) const;
+  bool IsDarkTheme() const;
+
  private:
   std::unique_ptr<TreelandProtocolManagerImpl> impl_;
 };

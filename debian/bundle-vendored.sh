@@ -40,6 +40,7 @@ bundle_soname wayland libwayland-server.so.0
 bundle_soname wayland libwayland-client.so.0
 bundle_soname libdrm libdrm.so.2
 bundle_soname pixman libpixman-1.so.0
+bundle_soname xkbcommon libxkbcommon.so.0
 
 if [ -d "$PRIVATE_LIBDIR" ]; then
     patchelf --set-rpath '$ORIGIN/../lib/flakewm' "$DESTDIR/usr/bin/flakewm"

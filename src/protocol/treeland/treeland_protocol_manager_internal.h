@@ -43,6 +43,11 @@ class TreelandGlobal {
  public:
   virtual ~TreelandGlobal() = default;
   virtual bool IsValid() const = 0;
+  // True when `client` has created at least one personalization window
+  // context, i.e. it is a DTK5/6 client that delegates popup decoration to
+  // the compositor (gxde-wlcom's client_has_window_context). DTK2 clients use
+  // only legacy dde_shell and never create a window context.
+  virtual bool ClientHasWindowContext(wl_client* client) const { return false; }
 };
 
 class TreelandProtocolManagerImpl final {
@@ -79,6 +84,10 @@ class TreelandProtocolManagerImpl final {
   void SetShadow(wlr_surface* surface, bool enabled) const;
   void SetBlur(wlr_surface* surface, bool enabled) const;
   bool SurfaceGeometry(wlr_surface* surface, wlr_box* geometry) const;
+  bool ClientHasWindowContext(wlr_surface* surface) const;
+  // True when the DTK appearance context last reported a dark window theme
+  // (TREELAND_PERSONALIZATION_APPEARANCE_CONTEXT_V1_THEME_TYPE_DARK == 4).
+  bool IsDarkTheme() const { return window_theme_type == 4; }
 
   core::CompositorPrivate* compositor;
   ProtocolManager* protocol_manager;
