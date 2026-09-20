@@ -64,6 +64,12 @@ build/*
 # Linker output
 *.ilk
 *.map
+# xkbcommon's symbol-version scripts are vendored source files, not linker
+# output, and must be tracked for the build to link a versioned libxkbcommon.
+!libs/xkbcommon/xkbcommon.map
+!libs/xkbcommon/xkbcommon-x11.map
+!libs/xkbcommon/xkbregistry.map
+!libs/xkbcommon/test/meson_test.map
 *.exp
 
 # Precompiled Headers
