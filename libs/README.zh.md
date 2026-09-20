@@ -32,6 +32,24 @@
 * **拉取日期**: Tue Aug 25 13:02:40 +0800
 * **许可证**: [MIT License](./pixman/COPYING)
 
+## XKBCommon
+* **上游**: https://github.com/xkbcommon/libxkbcommon
+* **标签**: `xkbcommon-1.8.0`
+* **提交ID**: `76740e0c4583ae49675e7ba8213d31ee09aa00d2`
+* **提交日期**: Thu Jan 30 13:21:00 2025 +0000
+* **拉取日期**: Fri Sep 19 22:50:42 2026 -0500
+* **许可证**: [MIT License](./xkbcommon/LICENSE)
+* **备注**: GXDE OS 25（基于trixie）的 `libxkbcommon` 1.7.0 低于 Wlroots 0.20 所需的 `>=1.8.0`，因此将其集成作为回退。
+
+## Wayland Protocols
+* **上游**: https://gitlab.freedesktop.org/wayland/wayland-protocols
+* **标签**: `1.47`
+* **提交ID**: `88223018d1b578d0d8869866da66d9608e05f928`
+* **提交日期**: Mon Dec 15 16:16:01 2025 +0100
+* **拉取日期**: Fri Sep 19 22:50:42 2026 -0500
+* **许可证**: [MIT License](./wayland-protocols/COPYING)
+* **备注**: Trixie 的 `wayland-protocols` 1.44 低于 Wlroots 0.20 所需的 `>=1.47`，因此将其集成作为回退。
+
 ## Waylib
 * **上游**: https://github.com/linuxdeepin/treeland
 * **标签**: N/A, pulling from main
