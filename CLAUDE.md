@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-FlakeWM is a Wayland compositor built on **wlroots 0.20.2**, targeting the Deepin/GXDE desktop and its DTK2/5/6 applications. It vendors wlroots and Abseil (plus fallback libdrm/pixman/wayland) under `libs/` — see `libs/README.md` for versions. Requires Qt 6.8 (used offscreen to render server-side decorations). Supported protocols are documented in `doc/protocols/protocols.md`.
+FlakeWM is a Wayland compositor built on **wlroots 0.20.2**, targeting the Deepin/GXDE desktop and its DTK2/5/6 applications. It vendors wlroots and Abseil (plus fallback wayland/wayland-protocols/libdrm/pixman/xkbcommon) under `libs/` — see `libs/README.md` for versions. Requires Qt 6.8 (used offscreen to render server-side decorations). Supported protocols are documented in `doc/protocols/protocols.md`.
 
 ## Build & run
 
@@ -62,6 +62,14 @@ Gotchas:
 - `pkill -f <pattern>` matches the bash command line that runs it, so it kills its own shell (exit 144). Use a bracket pattern: `pkill -f 'flakewm .*--neste[d]'`.
 - There is no input-injection tool on this box (`ydotool`/`wtype`/`wlrctl` are all absent), so pointer-driven behaviour (drags, grabs) needs a human at the keyboard — don't burn time building an automated repro.
 
-## Patching vendored wlroots
+## Vendored libraries (`libs/`) & packaging
 
-`cmake/wlroots.cmake:245` sets `WLROOTS_SOURCE_DIR` to `libs/wlroots`, so the vendored wlroots **is built from source** and a patch there does take effect. Prefer a compositor-side fix anyway; reach for `libs/` only when the behaviour is genuinely wrong for every consumer.
+`libs/` holds upstream-pristine vendored sources (wlroots, wayland, wayland-protocols, libdrm, pixman, xkbcommon, abseil, waylib) — versions in `libs/README.md`. **Never modify anything under `libs/`**: it is re-importable upstream source, so an edit there is lost on re-import. Fix the build glue in `cmake/` or the compositor instead.
+
+Build glue:
+- `cmake/wlroots.cmake` wires up every wlroots-side fallback. For each library (wayland, wayland-protocols, libdrm, pixman, xkbcommon) it probes the system package first (`pkg_check_modules(FLAKEWM_SYSTEM_*)`) and uses it when new enough, else builds the vendored copy with `ExternalProject_Add` + meson into `${CMAKE_BINARY_DIR}/_deps/`. wlroots itself is always built from source here (`WLROOTS_SOURCE_DIR` = `libs/wlroots`), so a patch to `libs/wlroots` *does* take effect — but prefer a compositor-side fix anyway; reach for `libs/` only when the behaviour is genuinely wrong for every consumer.
+- `libs/abseil-cpp` is the exception: it is added with `add_subdirectory(libs/abseil-cpp EXCLUDE_FROM_ALL)`, not `ExternalProject_Add`.
+
+Debian packaging (`debian/`):
+- `debian/rules` drives the CMake/Ninja build via `dh`; `debian/bundle-vendored.sh` copies any from-source fallback shared libs (wayland, libdrm, pixman, xkbcommon) into a private `usr/lib/flakewm/`, rewrites flakewm's RUNPATH to `$ORIGIN/../lib/flakewm`, and emits `debian/shlibs.local` so `dh_shlibdeps` maps them to flakewm (then dropped via `-xflakewm`). `debian/control` Build-Depends includes `bison`, `meson`, `patchelf` — the vendored xkbcommon/wayland meson builds need them. `./build-deb [-d|-b|-c]` is the local convenience wrapper; the GXDE riscv64 CI runs `dpkg-buildpackage -b` in a trixie chroot.
+- `.gitignore` has broad build-artifact rules (`*.map`, `*.so`, `*.a`) that also match some vendored *source* files (xkbcommon's symbol-version scripts are `*.map`, and are required for a versioned libxkbcommon). If a build references a file that "should" be in the checkout but isn't, run `git check-ignore -v <path>` before assuming the file is wrong.
