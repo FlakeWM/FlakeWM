@@ -22,8 +22,11 @@
 #include "src/view/ssd/popup_shadow/popup_shadow.h"
 
 #include <QColor>
+#include <QImage>
 #include <QPainter>
-#include <QRadialGradient>
+
+#include <algorithm>
+#include <cmath>
 
 namespace flakewm {
 namespace view {
@@ -42,6 +45,12 @@ constexpr int kShadowSize = kRadius + kShadowRadius;
 // kShadowSize - kRadius as its padding for the same reason).
 constexpr int kPadding = kShadowSize - kRadius;
 constexpr int kShadowAlpha = 0x2E;  // 0x2E ~= 0.18 * 255
+// gxde-wlcom's TREELAND_XDG_POPUP_SHADOW_OFFSET_Y: the drop shadow is pushed
+// 2px down, so the shadow spreads only kTopPadding above the content while the
+// bottom keeps the full kPadding (gxde-wlcom trims the shadow box's top edge by
+// the offset but leaves the bottom at the full shadow size).
+constexpr int kShadowOffsetY = 2;
+constexpr int kTopPadding = kPadding - kShadowOffsetY;  // 8
 // gxde-wlcom's popup border is black at 0.14 on light / white at 0.12 on dark,
 // but its texture shader fills the outer pixel solidly, so an anti-aliased
 // QPen stroke of the same alpha reads far fainter. Draw the border as a solid
@@ -50,12 +59,22 @@ constexpr int kShadowAlpha = 0x2E;  // 0x2E ~= 0.18 * 255
 constexpr int kBorderLight = 0x33;  // black ~0.20 on the light theme
 constexpr int kBorderDark = 0x1F;   // white ~0.12 on the dark theme
 
-// The rounded content hole shared by both atlases. The odd size (+1) and the
-// -0.5 offset keep the hole symmetric about the nine-patch split point, so its
-// flat edges stay flush with the popup surface after stretching.
-QRectF Hole() {
-  return QRectF(kShadowSize - kRadius - 0.5, kShadowSize - kRadius - 0.5,
-                kRadius * 2 + 1, kRadius * 2 + 1);
+// Signed distance from a point (in atlas coordinates) to the rounded content
+// corner, positive outside the content. The content hole is shifted up by the
+// drop offset (and made that much taller) so the shadow spreads kTopPadding
+// above the popup but the full kPadding below it, matching gxde-wlcom's shadow
+// box that trims only the top edge.
+double ContentDistance(double x, double y) {  // NOLINT(bugprone-easily-swappable-parameters)
+  const double left = kShadowSize - kRadius - 0.5;   // 9.5
+  const double top = left - kShadowOffsetY;          // 7.5
+  const double width = kRadius * 2 + 1;              // 17
+  const double height = width + kShadowOffsetY;      // 19
+  const double cx = left + width / 2.0, cy = top + height / 2.0;
+  const double bx = width / 2.0, by = height / 2.0;
+  const double rx = std::abs(x - cx) - bx + kRadius;
+  const double ry = std::abs(y - cy) - by + kRadius;
+  return std::min(std::max(rx, ry), 0.0) +
+         std::hypot(std::max(rx, 0.0), std::max(ry, 0.0)) - kRadius;
 }
 
 QImage MakeShadowAtlas() {
@@ -63,23 +82,29 @@ QImage MakeShadowAtlas() {
   QImage atlas(atlas_size, atlas_size, QImage::Format_ARGB32_Premultiplied);
   atlas.fill(Qt::transparent);
 
-  // Shadow fades from full strength at the content edge (radius kRadius) to
-  // transparent at the outer spread (radius kShadowSize).
-  const int center = kShadowSize;
-  QRadialGradient gradient(center, center, kShadowSize, center, center,
-                           kRadius);
-  gradient.setColorAt(0.0, QColor(0, 0, 0, kShadowAlpha));
-  gradient.setColorAt(1.0, Qt::transparent);
-
-  QPainter painter(&atlas);
-  painter.setRenderHint(QPainter::Antialiasing, true);
-  painter.fillRect(atlas.rect(), gradient);
-
-  // Punch the rounded content hole out of the shadow.
-  painter.setCompositionMode(QPainter::CompositionMode_DestinationOut);
-  painter.setPen(Qt::NoPen);
-  painter.setBrush(Qt::black);
-  painter.drawRoundedRect(Hole(), kRadius, kRadius);
+  // gxde-wlcom's chameleonShadow(): a Gaussian falloff in the signed distance
+  // to the rounded content, alpha = 0.6 * exp(-x^2 / 0.15) * 0.18, sampled at
+  // x = (max(distance, 0) + overlap) / shadow_size with
+  //   shadow_size = spread + 2 * corner_radius            (26)
+  //   overlap     = corner_radius + shadow_size * 0.15    (11.9)
+  // (see gxde-wlcom's scene/shaders/decoration.frag). Sampling the distance
+  // per-pixel — rather than a corner-centred radial gradient — keeps the
+  // falloff uniform along the flat edges; a radial gradient fades the flat
+  // edges faster than the corners and looks uneven.
+  const double shadow_size = kShadowRadius + 2.0 * kRadius;
+  const double overlap = kRadius + shadow_size * 0.15;
+  for (int y = 0; y < atlas_size; ++y) {
+    for (int x = 0; x < atlas_size; ++x) {
+      const double distance = ContentDistance(x + 0.5, y + 0.5);
+      int alpha = 0;
+      if (distance >= 0.0) {
+        const double t = (distance + overlap) / shadow_size;
+        alpha = static_cast<int>(
+            std::lround(std::exp(-(t * t) / 0.15) * kShadowAlpha * 0.6));
+      }
+      atlas.setPixel(x, y, qRgba(0, 0, 0, alpha));
+    }
+  }
   return atlas;
 }
 
@@ -88,33 +113,35 @@ QImage MakeBorderAtlas(bool dark) {
   QImage atlas(atlas_size, atlas_size, QImage::Format_ARGB32_Premultiplied);
   atlas.fill(Qt::transparent);
 
-  // A one-pixel border along the content edge, black on the light theme and
-  // white on dark (gxde-wlcom's theme-aware popup border color). gxde-wlcom's
-  // texture shader fills the outer pixel of the surface solidly (dist in
-  // [-borderWidth, 0] at full border alpha — see tex_rgba_ex.frag), so render
-  // the same shape here as a solid 1px ring: fill the content boundary (radius
-  // kRadius, arc centred on the nine-patch split point) then punch out the
-  // 1px-inset interior. A centred QPen stroke would halve its coverage across
-  // the content edge and anti-alias to ~half strength, reading as a faint line
-  // sitting inside the menu rather than a crisp edge on it.
+  // A one-pixel border around the content, black on the light theme and white
+  // on dark (gxde-wlcom's theme-aware popup border color). gxde-wlcom draws it
+  // OUTSIDE the blurred face: its decoration surface is inset by the border
+  // thickness from the decoration origin and the shader's rounded-corner radius
+  // is the content radius plus that border (scene/decoration.c,
+  // tex_rgba_ex.frag). Render the same shape here as a solid 1px ring just
+  // outside the content boundary: fill a rounded rect one pixel larger than the
+  // content (radius kRadius + 1, arc centred on the nine-patch split point)
+  // then punch out the content itself (radius kRadius). A centred QPen stroke
+  // would instead halve its coverage across the edge and anti-alias to ~half
+  // strength, reading as a faint line rather than a crisp edge.
   const QColor border =
       dark ? QColor(255, 255, 255, kBorderDark) : QColor(0, 0, 0, kBorderLight);
-  // The ring is drawn on the content's 16x16 corner tile (radius kRadius, arc
-  // centred on the nine-patch split point). The nine-patch then maps that tile
-  // onto the full content boundary, so only the corner arc and the two flat
-  // edges survive — drawing a rect that reaches the atlas edge would instead
-  // put its far strips into the shadow's corner region.
-  const QRectF outer(kPadding, kPadding, kRadius * 2, kRadius * 2);
-  const QRectF inner(kPadding + 1, kPadding + 1, kRadius * 2 - 2,
-                     kRadius * 2 - 2);
+  // The ring is drawn one pixel larger than the content's corner tile on every
+  // side (radius kRadius + 1). The nine-patch maps that tile onto the content
+  // boundary, so the ring survives as the 1px band just outside it — drawing a
+  // rect that reaches the atlas edge would instead put its far strips into the
+  // shadow's corner region.
+  const QRectF outer(kPadding - 1, kPadding - 1, kRadius * 2 + 2,
+                     kRadius * 2 + 2);
+  const QRectF inner(kPadding, kPadding, kRadius * 2, kRadius * 2);
   QPainter painter(&atlas);
   painter.setRenderHint(QPainter::Antialiasing, true);
   painter.setPen(Qt::NoPen);
   painter.setBrush(border);
-  painter.drawRoundedRect(outer, kRadius, kRadius);
+  painter.drawRoundedRect(outer, kRadius + 1, kRadius + 1);
   painter.setCompositionMode(QPainter::CompositionMode_DestinationOut);
   painter.setBrush(Qt::black);
-  painter.drawRoundedRect(inner, kRadius - 1, kRadius - 1);
+  painter.drawRoundedRect(inner, kRadius, kRadius);
   return atlas;
 }
 
@@ -153,10 +180,11 @@ PopupShadow::PopupShadow(wlr_scene_tree* parent) {
     wlr_scene_node_lower_to_bottom(&node_->node);
     wlr_scene_node_set_enabled(&node_->node, false);
   }
-  // The border is a separate node raised above the popup surface so its 1px
-  // stroke is visible on the content edge. Drawing it into the shadow atlas
-  // would bury it under the (translucent) surface where it only ever contrasts
-  // against the shadow — gxde-wlcom instead draws the border over the content.
+  // The border is a separate node raised above the shadow so its 1px ring stays
+  // visible just outside the content edge (gxde-wlcom draws the border around
+  // the blurred face, not under it). Drawing it into the shadow atlas would
+  // bury it under the (translucent) surface where it only ever contrasts
+  // against the shadow.
   border_node_ = wlr_scene_buffer_create(parent, nullptr);
   if (border_node_ != nullptr) {
     border_node_->point_accepts_input = RejectInput;
@@ -196,7 +224,7 @@ void PopupShadow::Update(const wlr_box& frame) {
   const bool rethemed = dark_ != rendered_dark_;
   if (!resized && !rethemed) {
     wlr_scene_node_set_position(&node_->node, frame.x - kPadding,
-                                frame.y - kPadding);
+                                frame.y - kTopPadding);
     if (border_node_ != nullptr) {
       wlr_scene_node_set_position(&border_node_->node, frame.x - kPadding,
                                   frame.y - kPadding);
@@ -205,7 +233,7 @@ void PopupShadow::Update(const wlr_box& frame) {
   }
 
   auto* next = SsdBuffer::Create(frame.width + kPadding * 2,
-                                 frame.height + kPadding * 2);
+                                 frame.height + kTopPadding + kPadding);
   if (next == nullptr) {
     wlr_scene_node_set_enabled(&node_->node, false);
     if (border_node_ != nullptr) {
@@ -236,7 +264,7 @@ void PopupShadow::Update(const wlr_box& frame) {
   frame_ = frame;
   rendered_dark_ = dark_;
   wlr_scene_node_set_position(&node_->node, frame.x - kPadding,
-                              frame.y - kPadding);
+                              frame.y - kTopPadding);
   wlr_scene_node_set_enabled(&node_->node, true);
 }
 

@@ -34,8 +34,8 @@ namespace view {
 // draw their own shadow or border under Wayland; the compositor owns both. The
 // shadow node lives at the bottom of the popup's scene tree so the popup
 // surface is composited on top of it; the border is a separate node raised
-// above the surface so its stroke is visible on the content edge (gxde-wlcom
-// draws the border over the content with the texture shader, not under it).
+// above the shadow so its 1px ring is visible just outside the content edge
+// (gxde-wlcom draws the border around the blurred face, not under it).
 class PopupShadow final {
  public:
   explicit PopupShadow(wlr_scene_tree* parent);
