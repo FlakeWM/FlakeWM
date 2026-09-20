@@ -323,14 +323,29 @@ else()
   )
   list(APPEND WLROOTS_VENDOR_DEPENDENCY_TARGETS wlroots_vendor_wayland_protocols)
 
-  # The meson-installed wayland-protocols.pc resolves pkgdatadir through
-  # ${pc_sysrootdir}${datarootdir}/..., which under pkgconf (pc_sysrootdir
-  # defaults to "/") expands to a leading "//". That indirection has been
-  # observed to hand wlroots' meson a wrong protocol directory on some build
-  # farms, yielding generated headers whose enums are missing their trailing
-  # values while the is_valid() cases still reference them. Point pkgdatadir
-  # straight at the vendored XML instead, and PREPEND it so pkg-config finds
-  # this .pc before the fragile meson-installed one.
+  # wlroots 0.20's public headers (wlr/types/wlr_color_management_v1.h and
+  # wlr_color_representation_v1.h) #include <wayland-protocols/*-enum.h>: the
+  # enum-only headers wayland-protocols generates with `wayland-scanner
+  # enum-header` (scanner >= 1.22.90) and installs under ${includedir}/
+  # wayland-protocols. wlroots also generates its own *-protocol.h
+  # (server-header) from the same XML; that header re-emits the enum behind
+  # #ifndef <ENUM> and, separately, an is_valid() that references the newest
+  # enum values. Both guards exist, but they are distinct, so the enum that
+  # ends up used is the one from whichever -enum.h is included first.
+  #
+  # Neither the upstream wayland-protocols.pc.in nor the .pc meson installs
+  # here declares an include dir for those -enum.h headers. So when wlroots
+  # compiles, <wayland-protocols/color-management-v1-enum.h> resolves to the
+  # *system* wayland-protocols (Trixie ships 1.44) via the default /usr/include.
+  # That 1.44 enum lacks the trailing 1.47 values, and because the .c files
+  # include the public header (hence the -enum.h) before the generated
+  # -protocol.h, its #ifndef <ENUM> guard suppresses the enum wlroots generated
+  # from the vendored 1.47 XML — while the 1.47 is_valid() still references
+  # those values, so the compiler reports them undeclared.
+  #
+  # Point pkgdatadir at the vendored XML (so *-protocol.h is 1.47) and expose
+  # the vendored include dir (so *-enum.h is 1.47 too). PREPEND this .pc so it
+  # shadows the meson-installed one.
   set(WLROOTS_VENDOR_WAYLAND_PROTOCOLS_PCDIR
     "${CMAKE_BINARY_DIR}/_deps/wayland-protocols-pkgconfig"
   )
@@ -342,6 +357,7 @@ else()
     "Name: Wayland Protocols\n"
     "Description: Wayland protocol files\n"
     "Version: 1.47\n"
+    "Cflags: -I${WLROOTS_VENDOR_WAYLAND_PROTOCOLS_PREFIX}/include\n"
   )
   list(PREPEND WLROOTS_VENDOR_PKGCONFIG_DIRS
     "${WLROOTS_VENDOR_WAYLAND_PROTOCOLS_PCDIR}"
