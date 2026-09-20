@@ -322,6 +322,30 @@ else()
       "${WLROOTS_VENDOR_WAYLAND_PROTOCOLS_PREFIX}/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml"
   )
   list(APPEND WLROOTS_VENDOR_DEPENDENCY_TARGETS wlroots_vendor_wayland_protocols)
+
+  # The meson-installed wayland-protocols.pc resolves pkgdatadir through
+  # ${pc_sysrootdir}${datarootdir}/..., which under pkgconf (pc_sysrootdir
+  # defaults to "/") expands to a leading "//". That indirection has been
+  # observed to hand wlroots' meson a wrong protocol directory on some build
+  # farms, yielding generated headers whose enums are missing their trailing
+  # values while the is_valid() cases still reference them. Point pkgdatadir
+  # straight at the vendored XML instead, and PREPEND it so pkg-config finds
+  # this .pc before the fragile meson-installed one.
+  set(WLROOTS_VENDOR_WAYLAND_PROTOCOLS_PCDIR
+    "${CMAKE_BINARY_DIR}/_deps/wayland-protocols-pkgconfig"
+  )
+  file(MAKE_DIRECTORY "${WLROOTS_VENDOR_WAYLAND_PROTOCOLS_PCDIR}")
+  file(WRITE "${WLROOTS_VENDOR_WAYLAND_PROTOCOLS_PCDIR}/wayland-protocols.pc"
+    "prefix=${FLAKEWM_ROOT_DIR}/libs/wayland-protocols\n"
+    "pkgdatadir=${FLAKEWM_ROOT_DIR}/libs/wayland-protocols\n"
+    "\n"
+    "Name: Wayland Protocols\n"
+    "Description: Wayland protocol files\n"
+    "Version: 1.47\n"
+  )
+  list(PREPEND WLROOTS_VENDOR_PKGCONFIG_DIRS
+    "${WLROOTS_VENDOR_WAYLAND_PROTOCOLS_PCDIR}"
+  )
   list(APPEND WLROOTS_VENDOR_PKGCONFIG_DIRS
     "${WLROOTS_VENDOR_WAYLAND_PROTOCOLS_PREFIX}/share/pkgconfig"
   )
