@@ -248,10 +248,31 @@ void TreelandProtocolManagerImpl::SetBlur(wlr_surface* surface,
     return;
   }
   if (enabled) {
-    pixman_region32_t full;
-    pixman_region32_init(&full);
-    compositor->backdrop_blur_renderer_->SetSurfaceBlur(surface, &full, 2.6F);
-    pixman_region32_fini(&full);
+    pixman_region32_t region;
+    pixman_region32_init(&region);
+    if (surface->current.width > 0 && surface->current.height > 0) {
+      // Fix: treeland blur overflow
+      wlr_box geometry = {
+        .width = surface->current.width,
+        .height = surface->current.height
+      };
+
+      if (wlr_xdg_surface* xdg_surface =
+          wlr_xdg_surface_try_from_wlr_surface(surface)) {
+        geometry = xdg_surface->geometry;
+      }
+
+      const wlr_box surface_box = {
+        .width = surface->current.width,
+        .height = surface->current.height
+      };
+
+      wlr_box_intersection(&geometry, &geometry, &surface_box);
+      pixman_region32_union_rect(&region, &region, geometry.x, geometry.y,
+        geometry.width, geometry.height);
+    }
+    compositor->backdrop_blur_renderer_->SetSurfaceBlur(surface, &region, 2.6F);
+    pixman_region32_fini(&region);
   } else {
     compositor->backdrop_blur_renderer_->ClearSurfaceBlur(surface);
   }
