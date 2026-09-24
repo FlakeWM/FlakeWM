@@ -192,6 +192,47 @@ const char* ResizeCursorName(uint32_t edges) {
 }
 
 constexpr int kCsdResizeMargin = 8;
+// Height of a moved window's frame kept above the bottom of the usable area.
+constexpr int kMoveTitlebarVisible = 32;
+
+// Splits a usable area into the slot of a split-screen tile.
+wlr_box TileBox(const wlr_box& usable, view::SplitScreenSwitcher::Tile tile) {
+  const int left_width = usable.width / 2;
+  const int right_width = usable.width - left_width;
+  const int top_height = usable.height / 2;
+  const int bottom_height = usable.height - top_height;
+  wlr_box target = usable;
+  switch (tile) {
+    case view::SplitScreenSwitcher::Tile::kLeft:
+      target.width = left_width;
+      break;
+    case view::SplitScreenSwitcher::Tile::kRight:
+      target.x += left_width;
+      target.width = right_width;
+      break;
+    case view::SplitScreenSwitcher::Tile::kTopLeft:
+      target.width = left_width;
+      target.height = top_height;
+      break;
+    case view::SplitScreenSwitcher::Tile::kBottomLeft:
+      target.y += top_height;
+      target.width = left_width;
+      target.height = bottom_height;
+      break;
+    case view::SplitScreenSwitcher::Tile::kTopRight:
+      target.x += left_width;
+      target.width = right_width;
+      target.height = top_height;
+      break;
+    case view::SplitScreenSwitcher::Tile::kBottomRight:
+      target.x += left_width;
+      target.y += top_height;
+      target.width = right_width;
+      target.height = bottom_height;
+      break;
+  }
+  return target;
+}
 
 }  // namespace
 
@@ -1422,6 +1463,20 @@ wlr_box CompositorPrivate::Toplevel::FrameGeometry() const {
   return ssd == nullptr ? geometry : ssd->FrameGeometry(geometry);
 }
 
+wlr_box CompositorPrivate::Toplevel::LayoutFrame() const {
+  // The xdg scene tree already shifts the surface by the window geometry
+  // offset, so the node sits at the geometry origin rather than the buffer
+  // origin. Only the decoration extends past it.
+  if (scene_tree == nullptr) {
+    return {};
+  }
+  const wlr_box geometry = Geometry();
+  wlr_box frame = FrameGeometry();
+  frame.x += scene_tree->node.x - geometry.x;
+  frame.y += scene_tree->node.y - geometry.y;
+  return frame;
+}
+
 void CompositorPrivate::Toplevel::UpdateCapabilities() {
   uint32_t capabilities = WLR_XDG_TOPLEVEL_WM_CAPABILITIES_FULLSCREEN |
                           WLR_XDG_TOPLEVEL_WM_CAPABILITIES_WINDOW_MENU;
@@ -1463,6 +1518,7 @@ void CompositorPrivate::Toplevel::OnMap(Toplevel* toplevel, void*) {
     toplevel->compositor->RebuildSurfaceClip(toplevel);
     toplevel->compositor->UpdateCsdShadow(toplevel);
   }
+  toplevel->compositor->ConstrainToUsableArea(toplevel);
   if (toplevel->WantsFocus()) {
     toplevel->compositor->FocusToplevel(toplevel);
   }
@@ -2702,6 +2758,7 @@ void CompositorPrivate::ArrangeLayers(Output* output) {
       }
     }
   }
+  const wlr_box old_usable = output->usable_box;
   output->usable_box = usable_box;
   output->usable_box.x += output_box.x;
   output->usable_box.y += output_box.y;
@@ -2709,14 +2766,132 @@ void CompositorPrivate::ArrangeLayers(Output* output) {
     protocol_manager_->UpdateOutputUsableAreas();
   }
 
-  // Maximized windows follow changes made by panels and other exclusive layers.
+  FitToplevelsToUsableArea(output, old_usable);
+}
+
+void CompositorPrivate::FitToplevelsToUsableArea(Output* output,
+                                                 const wlr_box& old_usable) {
+  const wlr_box& usable = output->usable_box;
+  if (usable.width <= 0 || usable.height <= 0) {
+    return;
+  }
+  const bool changed = !wlr_box_equal(&old_usable, &usable);
+
   for (const std::unique_ptr<Toplevel>& toplevel : toplevels_) {
-    if (!toplevel->maximized || !toplevel->IsAlive() ||
-        toplevel->maximized_output != output->handle) {
+    if (!toplevel->IsAlive() || toplevel->scene_tree == nullptr) {
       continue;
     }
-    toplevel->maximized_box = output->usable_box;
-    toplevel->Configure(output->usable_box);
+
+    // Maximized and tiled windows follow changes made by panels and other
+    // exclusive layers.
+    if (toplevel->maximized) {
+      if (toplevel->maximized_output == output->handle) {
+        toplevel->maximized_box = usable;
+        toplevel->Configure(usable);
+      }
+      continue;
+    }
+    if (toplevel->tiled) {
+      if (toplevel->tiled_output == output->handle && changed) {
+        toplevel->tiled_box = TileBox(usable, toplevel->tile);
+        toplevel->tile_position_pending = true;
+        toplevel->Configure(toplevel->tiled_box);
+      }
+      continue;
+    }
+
+    // Floating windows only move when a newly reserved strip now covers an
+    // edge that used to be usable. Windows placed partly off the old usable
+    // area on purpose stay where they are.
+    if (!changed || old_usable.width <= 0 || old_usable.height <= 0 ||
+        !toplevel->mapped || toplevel->minimized || !toplevel->CanManage() ||
+        toplevel->RequestedFullscreen()) {
+      continue;
+    }
+    const wlr_box box = toplevel->LayoutFrame();
+    if (box.width <= 0 || box.height <= 0) {
+      continue;
+    }
+    wlr_box overlap = {};
+    if (!wlr_box_intersection(&overlap, &box, &old_usable)) {
+      continue;
+    }
+
+    // The top-left edge wins so the titlebar stays reachable.
+    const int usable_right = usable.x + usable.width;
+    const int usable_bottom = usable.y + usable.height;
+    int x = box.x;
+    int y = box.y;
+    if (box.x + box.width > usable_right &&
+        box.x + box.width <= old_usable.x + old_usable.width) {
+      x = std::max(usable_right - box.width, usable.x);
+    }
+    if (box.x < usable.x && box.x >= old_usable.x) {
+      x = usable.x;
+    }
+    if (box.y + box.height > usable_bottom &&
+        box.y + box.height <= old_usable.y + old_usable.height) {
+      y = std::max(usable_bottom - box.height, usable.y);
+    }
+    if (box.y < usable.y && box.y >= old_usable.y) {
+      y = usable.y;
+    }
+    if (x == box.x && y == box.y) {
+      continue;
+    }
+
+    MoveToplevelFrame(toplevel.get(), x, y);
+  }
+}
+
+void CompositorPrivate::MoveToplevelFrame(Toplevel* toplevel, int x, int y) {
+  const wlr_box frame = toplevel->LayoutFrame();
+  if (toplevel->IsXWayland()) {
+    toplevel->Configure(
+        {.x = x, .y = y, .width = frame.width, .height = frame.height});
+  } else {
+    wlr_scene_node_set_position(&toplevel->scene_tree->node,
+                                toplevel->scene_tree->node.x + x - frame.x,
+                                toplevel->scene_tree->node.y + y - frame.y);
+  }
+  if (protocol_manager_ != nullptr) {
+    protocol_manager_->UpdateToplevel(toplevel->Surface());
+  }
+}
+
+void CompositorPrivate::ConstrainToUsableArea(Toplevel* toplevel) {
+  // Keep a floating window's frame out of space reserved by panels. Axes the
+  // window does not fit in keep their top-left edge reachable.
+  if (toplevel == nullptr || !toplevel->IsAlive() ||
+      toplevel->scene_tree == nullptr || toplevel->maximized ||
+      toplevel->tiled || !toplevel->CanManage() ||
+      toplevel->RequestedFullscreen()) {
+    return;
+  }
+  const wlr_box frame = toplevel->LayoutFrame();
+  if (frame.width <= 0 || frame.height <= 0) {
+    return;
+  }
+  const int x = frame.x;
+  const int y = frame.y;
+  wlr_output* output = wlr_output_layout_output_at(
+      output_layout_, x + frame.width / 2.0, y + frame.height / 2.0);
+  if (output == nullptr) {
+    output = wlr_output_layout_output_at(output_layout_, x, y);
+  }
+  if (output == nullptr) {
+    return;
+  }
+  const wlr_box usable = UsableOutputBox(output);
+  if (usable.width <= 0 || usable.height <= 0) {
+    return;
+  }
+  const int new_x =
+      std::max(std::min(x, usable.x + usable.width - frame.width), usable.x);
+  const int new_y =
+      std::max(std::min(y, usable.y + usable.height - frame.height), usable.y);
+  if (new_x != x || new_y != y) {
+    MoveToplevelFrame(toplevel, new_x, new_y);
   }
 }
 
@@ -2845,40 +3020,7 @@ void CompositorPrivate::TileToplevel(Toplevel* toplevel,
     }
   }
 
-  const int left_width = usable.width / 2;
-  const int right_width = usable.width - left_width;
-  const int top_height = usable.height / 2;
-  const int bottom_height = usable.height - top_height;
-  wlr_box target = usable;
-  switch (tile) {
-    case view::SplitScreenSwitcher::Tile::kLeft:
-      target.width = left_width;
-      break;
-    case view::SplitScreenSwitcher::Tile::kRight:
-      target.x += left_width;
-      target.width = right_width;
-      break;
-    case view::SplitScreenSwitcher::Tile::kTopLeft:
-      target.width = left_width;
-      target.height = top_height;
-      break;
-    case view::SplitScreenSwitcher::Tile::kBottomLeft:
-      target.y += top_height;
-      target.width = left_width;
-      target.height = bottom_height;
-      break;
-    case view::SplitScreenSwitcher::Tile::kTopRight:
-      target.x += left_width;
-      target.width = right_width;
-      target.height = top_height;
-      break;
-    case view::SplitScreenSwitcher::Tile::kBottomRight:
-      target.x += left_width;
-      target.y += top_height;
-      target.width = right_width;
-      target.height = bottom_height;
-      break;
-  }
+  const wlr_box target = TileBox(usable, tile);
 
   if (tile_animation_ != nullptr) {
     wlr_box animated_from = toplevel->FrameGeometry();
@@ -2891,6 +3033,8 @@ void CompositorPrivate::TileToplevel(Toplevel* toplevel,
   toplevel->maximized_output = nullptr;
   toplevel->tiled = true;
   toplevel->tiled_box = target;
+  toplevel->tile = tile;
+  toplevel->tiled_output = output;
   toplevel->tile_position_pending = true;
   toplevel->restore_position_pending = false;
   if (toplevel->ssd != nullptr) {
@@ -3143,7 +3287,19 @@ void CompositorPrivate::ProcessInteractiveMotion() {
   // Move the whole scene tree and watch for the top output edge.
   if (cursor_mode_ == CursorMode::kMove) {
     const int x = cursor_->x - grab_x_;
-    const int y = cursor_->y - grab_y_;
+    int y = cursor_->y - grab_y_;
+    // Panels keep the titlebar reachable: the frame top stays inside the
+    // usable area of the output under the pointer.
+    const wlr_box usable = UsableOutputBox(
+        wlr_output_layout_output_at(output_layout_, cursor_->x, cursor_->y));
+    if (usable.width > 0 && usable.height > 0) {
+      const int frame_offset = grabbed_toplevel_->LayoutFrame().y -
+                               grabbed_toplevel_->scene_tree->node.y;
+      const int min_top = usable.y;
+      const int max_top =
+          std::max(min_top, usable.y + usable.height - kMoveTitlebarVisible);
+      y = std::clamp(y + frame_offset, min_top, max_top) - frame_offset;
+    }
     if (grabbed_toplevel_->IsXWayland()) {
       wlr_box box = grabbed_toplevel_->Geometry();
       box.x = x;
@@ -3165,6 +3321,15 @@ void CompositorPrivate::ProcessInteractiveMotion() {
   const int border_y = cursor_->y - grab_y_;
   if (resize_edges_ & WLR_EDGE_TOP) {
     top = std::min(border_y, bottom - 1);
+    // Growing upward stops at a top panel.
+    const wlr_box usable = UsableOutputBox(
+        wlr_output_layout_output_at(output_layout_, cursor_->x, cursor_->y));
+    // grab_box_ is in Configure() coordinates, which count the window
+    // geometry offset that the xdg scene tree has already applied.
+    const int min_top = usable.y + grabbed_toplevel_->Geometry().y;
+    if (usable.width > 0 && usable.height > 0 && grab_box_.y >= min_top) {
+      top = std::min(std::max(top, min_top), bottom - 1);
+    }
   } else if (resize_edges_ & WLR_EDGE_BOTTOM) {
     bottom = std::max(border_y, top + 1);
   }

@@ -137,6 +137,7 @@ void TreelandProtocolManagerImpl::ApplySurfacePosition(wlr_surface* surface,
     const wlr_box geometry = toplevel->FrameGeometry();
     wlr_scene_node_set_position(&toplevel->scene_tree->node, x - geometry.x,
                                 y - geometry.y);
+    compositor->ConstrainToUsableArea(toplevel);
     protocol_manager->UpdateToplevel(toplevel->Surface());
     return;
   }

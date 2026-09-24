@@ -218,6 +218,7 @@ class CompositorPrivate final {
     virtual void Restack() const;
     virtual void Close() const;
     wlr_box FrameGeometry() const;
+    wlr_box LayoutFrame() const;
     void UpdateCapabilities();
 
     static void OnMap(Toplevel* toplevel, void*);
@@ -255,6 +256,10 @@ class CompositorPrivate final {
     wlr_box maximized_box = {};
     wlr_box tiled_box = {};
     wlr_output* maximized_output = nullptr;
+    // Tiled windows are re-fitted when their output's usable area changes.
+    view::SplitScreenSwitcher::Tile tile =
+        view::SplitScreenSwitcher::Tile::kLeft;
+    wlr_output* tiled_output = nullptr;
     int corner_radius = 8;
     std::unique_ptr<view::Ssd> ssd;
     std::unique_ptr<view::SsdSurfaceClip> ssd_clip;
@@ -350,6 +355,9 @@ class CompositorPrivate final {
   wlr_box OutputBoxAt(double layout_x, double layout_y) const;
   wlr_box UsableOutputBox(wlr_output* output) const;
   void ArrangeLayers(Output* output);
+  void FitToplevelsToUsableArea(Output* output, const wlr_box& old_usable);
+  void MoveToplevelFrame(Toplevel* toplevel, int x, int y);
+  void ConstrainToUsableArea(Toplevel* toplevel);
   void SetMaximized(Toplevel* toplevel, bool maximized);
   void ToggleMaximized(Toplevel* toplevel);
   void TileToplevel(Toplevel* toplevel, view::SplitScreenSwitcher::Tile tile);
