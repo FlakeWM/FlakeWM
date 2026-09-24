@@ -223,12 +223,11 @@ class WindowSelectorToolbarRenderer final {
 };
 
 WindowSelector::WindowSelector(wlr_scene_tree* overlay_parent, wlr_seat* seat,
-                               wlr_cursor* cursor,
-                               wlr_xcursor_manager* cursor_manager,
+                               wlr_cursor* cursor, SetCursor set_cursor,
                                HitTest hit_test)
     : seat_(seat),
       cursor_(cursor),
-      cursor_manager_(cursor_manager),
+      set_cursor_(std::move(set_cursor)),
       hit_test_(std::move(hit_test)) {
   if (overlay_parent == nullptr) return;
   overlay_ = wlr_scene_tree_create(overlay_parent);
@@ -263,7 +262,7 @@ bool WindowSelector::Start(uint32_t allowed_modes, wlr_surface* mask,
                            Done done) {
   const std::vector<Mode> modes = AvailableModes(allowed_modes);
   if (active_ || overlay_ == nullptr || seat_ == nullptr ||
-      cursor_ == nullptr || cursor_manager_ == nullptr || !hit_test_ || !done ||
+      cursor_ == nullptr || !set_cursor_ || !hit_test_ || !done ||
       modes.empty()) {
     return false;
   }
@@ -276,8 +275,7 @@ bool WindowSelector::Start(uint32_t allowed_modes, wlr_surface* mask,
   button_down_ = false;
   dragged_ = false;
   wlr_seat_pointer_clear_focus(seat_);
-  wlr_cursor_set_xcursor(cursor_, cursor_manager_,
-                         mode_ == Mode::kRegion ? "crosshair" : "pointer");
+  set_cursor_(mode_ == Mode::kRegion ? "crosshair" : "pointer");
   wlr_scene_node_raise_to_top(&overlay_->node);
   UpdateHover();
   return true;
@@ -405,12 +403,11 @@ void WindowSelector::UpdateHover() {
   wlr_scene_node_set_enabled(&overlay_->node, false);
   toolbar_hover_ = ToolbarModeAt(cursor_->x, cursor_->y);
   if (toolbar_hover_.has_value()) {
-    wlr_cursor_set_xcursor(cursor_, cursor_manager_, "pointer");
+    set_cursor_("pointer");
     UpdateOverlay();
     return;
   }
-  wlr_cursor_set_xcursor(cursor_, cursor_manager_,
-                         mode_ == Mode::kRegion ? "crosshair" : "pointer");
+  set_cursor_(mode_ == Mode::kRegion ? "crosshair" : "pointer");
   current_ = hit_test_(mode_, cursor_->x, cursor_->y, mask_);
   output_bounds_ = hit_test_(Mode::kOutput, cursor_->x, cursor_->y, mask_);
   UpdateOverlay();
@@ -566,8 +563,7 @@ void WindowSelector::SetMode(Mode mode) {
   current_.reset();
   press_target_.reset();
   toolbar_hover_.reset();
-  wlr_cursor_set_xcursor(cursor_, cursor_manager_,
-                         mode_ == Mode::kRegion ? "crosshair" : "pointer");
+  set_cursor_(mode_ == Mode::kRegion ? "crosshair" : "pointer");
   UpdateHover();
 }
 
@@ -615,9 +611,7 @@ void WindowSelector::ResetVisuals() {
   allowed_modes_ = 0;
   done_ = {};
   if (overlay_ != nullptr) wlr_scene_node_set_enabled(&overlay_->node, false);
-  if (cursor_ != nullptr && cursor_manager_ != nullptr) {
-    wlr_cursor_set_xcursor(cursor_, cursor_manager_, "default");
-  }
+  if (set_cursor_) set_cursor_("default");
 }
 
 }  // namespace view

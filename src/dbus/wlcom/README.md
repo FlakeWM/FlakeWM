@@ -36,6 +36,7 @@ The contract was audited against the source vtables, `README.md`,
 | `top.gxde.Wlcom.Theme` | GXDE theme alias |
 | `top.gxde.Wlcom.WindowBtn` | GTK decoration-button settings |
 | `top.gxde.Wlcom.WindowCorner` | GXDE forced-corner settings |
+| `top.gxde.Wlcom.MouseFinder` | GXDE mouse finder (`shake_cursor` effect) switch |
 | `org.ukui.KWin` | UKUI Screenshot and Watermark compatibility |
 | `org.kde.KWin` | KDE Screenshot, Clipboard and InputDevice compatibility |
 | `org.kde.KWin.PresentWindows` | KWin PresentWindows plugin compatibility |
@@ -90,6 +91,11 @@ are exported below `/component/<escaped-component-name>`.
   immediately to existing and future KDE blur regions.  The other effects,
   and `noise_strength`, are stored for compatibility but have no FlakeWM
   rendering behind them.
+- `shake_cursor` is implemented (`src/view/shake_cursor/`): shaking the pointer
+  shows the theme's arrow at 4x size until it settles, with GXWM's detector
+  and timings.  `MouseFinder.SetEnabled` switches it at runtime, persists its
+  `enabled` option and mirrors it to `org.ukui.peripherals-mouse
+  shake-cursor`; changes to that key are applied back the same way.
 - The compositor publishes its Wayland/X11 desktop variables through both
   `org.freedesktop.DBus.UpdateActivationEnvironment` and systemd's user manager.
 - UKUI settings-daemon services are discovered through D-Bus owner changes;

@@ -38,6 +38,7 @@
 #include "src/utils/signal_listener.h"
 #include "src/view/app_switcher/app_switcher.h"
 #include "src/view/multitasking/multitasking.h"
+#include "src/view/shake_cursor/shake_cursor.h"
 #include "src/view/ssd/popup_shadow/popup_shadow.h"
 #include "src/view/ssd/split_screen_switcher/split_screen_switcher.h"
 #include "src/view/ssd/split_screen_switcher/tile_animation.h"
@@ -372,6 +373,15 @@ class CompositorPrivate final {
   void BeginInteractive(Toplevel* toplevel, CursorMode mode, uint32_t edges);
   void ProcessInteractiveMotion();
   void ProcessCursorMotion(uint32_t time_msec);
+  // Every cursor image change goes through these so an effect can hold the
+  // image hidden (LockCursorImage); the latest request is applied on unlock.
+  void SetCursorName(const char* name);
+  void SetCursorSurface(wlr_surface* surface, int32_t hotspot_x,
+                        int32_t hotspot_y);
+  void UnsetCursorImage();
+  void LockCursorImage(bool locked);
+  void ApplyCursorImage();
+  static void OnCursorSurfaceDestroy(CompositorPrivate* compositor, void*);
   static void OnCursorMotion(CompositorPrivate* compositor,
                              wlr_pointer_motion_event* event);
   static void OnCursorMotionAbsolute(CompositorPrivate* compositor,
@@ -447,6 +457,7 @@ class CompositorPrivate final {
   std::unique_ptr<input::KeyBindingManager> key_binding_manager_;
   std::unique_ptr<dbus::WlcomDbusManager> dbus_manager_;
   std::unique_ptr<view::TouchFeedback> touch_feedback_;
+  std::unique_ptr<view::ShakeCursor> shake_cursor_;
   std::unique_ptr<view::AppSwitcher> app_switcher_;
   std::unique_ptr<view::Multitasking> multitasking_;
   std::unique_ptr<view::WindowPreviews> window_previews_;
@@ -540,6 +551,18 @@ class CompositorPrivate final {
   Toplevel* pending_window_menu_ = nullptr;
   bool maximize_on_release_ = false;
   bool cursor_hidden_by_touch_ = false;
+  struct CursorImage {
+    enum class Kind : uint8_t { kName, kSurface, kNone };
+    Kind kind = Kind::kName;
+    std::string name = "default";
+    wlr_surface* surface = nullptr;
+    int32_t hotspot_x = 0;
+    int32_t hotspot_y = 0;
+  };
+  CursorImage cursor_image_;
+  bool cursor_image_locked_ = false;
+  utils::SignalListener<CompositorPrivate, void> cursor_surface_destroy_{
+      this, OnCursorSurfaceDestroy};
   bool touch_pointer_frame_pending_ = false;
   std::string socket_name_;
   bool nested_ = false;

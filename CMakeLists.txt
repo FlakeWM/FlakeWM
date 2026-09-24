@@ -213,6 +213,7 @@ set(flakewm_CXX_SOURCES
   src/view/multitasking/multitasking_renderer.cc
   src/view/multitasking/multitasking_wallpaper.cc
   src/view/touch_feedback.cc
+  src/view/shake_cursor/shake_cursor.cc
   src/view/window_previews/window_previews.cc
   src/view/window_previews/window_previews_layout.cc
   src/view/window_previews/window_previews_renderer.cc
@@ -302,6 +303,7 @@ add_executable(flakewm
   src/view/multitasking/multitasking_renderer.h
   src/view/multitasking/multitasking_wallpaper.h
   src/view/touch_feedback.h
+  src/view/shake_cursor/shake_cursor.h
   src/view/window_previews/window_previews.h
   src/view/window_previews/window_previews_renderer.h
   src/view/window_selecter/window_selector.h

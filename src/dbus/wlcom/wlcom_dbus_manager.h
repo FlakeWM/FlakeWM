@@ -35,6 +35,10 @@
 #include <memory>
 #include <vector>
 
+#ifdef FLAKEWM_HAS_QGSETTINGS
+class QGSettings;
+#endif
+
 #include "src/utils/signal_listener.h"
 #include "src/wlr_wrapper/wlroots.h"
 
@@ -112,6 +116,7 @@ class WlcomDbusManager final : public QDBusVirtualObject {
   bool HandleSeat(const QDBusMessage& message);
   bool HandleTheme(const QDBusMessage& message);
   bool HandleEffect(const QDBusMessage& message);
+  bool HandleMouseFinder(const QDBusMessage& message);
   bool HandlePlugin(const QDBusMessage& message);
   bool HandleScreenshot(const QDBusMessage& message);
   bool HandleWatermark(const QDBusMessage& message);
@@ -146,6 +151,9 @@ class WlcomDbusManager final : public QDBusVirtualObject {
   bool EffectEnabled(const QString& name) const;
   void LoadEffectState();
   void ApplyBlurEffect();
+  void ApplyEffectState(const QString& name);
+  void SetMouseFinderEnabled(bool enabled, bool mirror_to_gsettings);
+  void SetupMouseSettings();
 
   GlobalShortcutComponent* FindComponent(const QString& name);
   const GlobalShortcutComponent* FindComponent(const QString& name) const;
@@ -176,6 +184,10 @@ class WlcomDbusManager final : public QDBusVirtualObject {
   // Runtime effect state. EnableEffect only changes this, like GXWM; the
   // persisted "enabled" option is read at startup.
   QHash<QString, bool> effect_enabled_;
+#ifdef FLAKEWM_HAS_QGSETTINGS
+  // org.ukui.peripherals-mouse, whose shake-cursor key mirrors MouseFinder.
+  std::unique_ptr<QGSettings> mouse_settings_;
+#endif
   bool show_desktop_ = false;
   bool shortcuts_blocked_ = false;
   int clipboard_pid_ = 0;

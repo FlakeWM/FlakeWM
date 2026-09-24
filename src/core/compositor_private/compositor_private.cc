@@ -473,11 +473,16 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
   if (!wlr_xcursor_manager_load(cursor_manager_, 1.0F)) {
     ABSL_LOG(WARNING) << "Failed to load the default cursor theme";
   }
-  wlr_cursor_set_xcursor(cursor_, cursor_manager_, "default");
+  SetCursorName("default");
+  // GXDE mouse finder; enabled by the wlcom D-Bus layer from its effect state.
+  shake_cursor_ = std::make_unique<view::ShakeCursor>(
+      wl_display_get_event_loop(display_), &scene_->tree, cursor_,
+      [this]() { return cursor_manager_; },
+      [this](bool locked) { LockCursorImage(locked); });
 
   window_selector_ = std::make_unique<view::WindowSelector>(
       shell_layer_trees_[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY], seat_, cursor_,
-      cursor_manager_,
+      [this](const char* name) { SetCursorName(name); },
       [this](view::WindowSelector::Mode mode, double layout_x, double layout_y,
              wlr_surface* mask) -> std::optional<view::WindowSelector::Target> {
         wlr_output* output =
@@ -3264,7 +3269,7 @@ void CompositorPrivate::BeginInteractive(Toplevel* toplevel, CursorMode mode,
     return;
   }
   toplevel->SetResizingState(true);
-  wlr_cursor_set_xcursor(cursor_, cursor_manager_, ResizeCursorName(edges));
+  SetCursorName(ResizeCursorName(edges));
 
   // Resize grabs use global geometry and the requested border.
   grab_box_ = toplevel->FrameGeometry();
@@ -3347,26 +3352,26 @@ void CompositorPrivate::ProcessInteractiveMotion() {
 void CompositorPrivate::ProcessCursorMotion(uint32_t time_msec) {
   if (window_menu_ != nullptr &&
       window_menu_->HandleMotion(cursor_->x, cursor_->y)) {
-    wlr_cursor_set_xcursor(cursor_, cursor_manager_, "default");
+    SetCursorName("default");
     wlr_seat_pointer_clear_focus(seat_);
     return;
   }
   if (split_screen_switcher_ != nullptr &&
       split_screen_switcher_->HandleMotion(cursor_->x, cursor_->y)) {
     if (titlebar_tooltip_ != nullptr) titlebar_tooltip_->Cancel();
-    wlr_cursor_set_xcursor(cursor_, cursor_manager_, "default");
+    SetCursorName("default");
     wlr_seat_pointer_clear_focus(seat_);
     return;
   }
   if (window_previews_ != nullptr &&
       window_previews_->HandleMotion(cursor_->x, cursor_->y)) {
-    wlr_cursor_set_xcursor(cursor_, cursor_manager_, "default");
+    SetCursorName("default");
     wlr_seat_pointer_clear_focus(seat_);
     return;
   }
   if (multitasking_ != nullptr &&
       multitasking_->HandleMotion(cursor_->x, cursor_->y)) {
-    wlr_cursor_set_xcursor(cursor_, cursor_manager_, "default");
+    SetCursorName("default");
     wlr_seat_pointer_clear_focus(seat_);
     return;
   }
@@ -3405,8 +3410,7 @@ void CompositorPrivate::ProcessCursorMotion(uint32_t time_msec) {
     if (split_screen_switcher_ != nullptr) {
       split_screen_switcher_->LeaveMaximize();
     }
-    wlr_cursor_set_xcursor(cursor_, cursor_manager_,
-                           ResizeCursorName(csd_resize_hit.edges));
+    SetCursorName(ResizeCursorName(csd_resize_hit.edges));
     wlr_seat_pointer_clear_focus(seat_);
     return;
   }
@@ -3436,15 +3440,14 @@ void CompositorPrivate::ProcessCursorMotion(uint32_t time_msec) {
     }
   }
   if (ssd_hit.part != view::Ssd::Part::kNone) {
-    wlr_cursor_set_xcursor(cursor_, cursor_manager_,
-                           ssd_hit.part == view::Ssd::Part::kResize
-                               ? ResizeCursorName(ssd_hit.edges)
-                               : "default");
+    SetCursorName(ssd_hit.part == view::Ssd::Part::kResize
+                      ? ResizeCursorName(ssd_hit.edges)
+                      : "default");
     wlr_seat_pointer_clear_focus(seat_);
     return;
   }
   if (toplevel == nullptr) {
-    wlr_cursor_set_xcursor(cursor_, cursor_manager_, "default");
+    SetCursorName("default");
   }
   // Forward motion in surface-local coordinates.
   if (surface != nullptr) {
@@ -3458,8 +3461,7 @@ void CompositorPrivate::ProcessCursorMotion(uint32_t time_msec) {
 void CompositorPrivate::OnCursorMotion(CompositorPrivate* compositor,
                                        wlr_pointer_motion_event* event) {
   if (compositor->cursor_hidden_by_touch_) {
-    wlr_cursor_set_xcursor(compositor->cursor_, compositor->cursor_manager_,
-                           "default");
+    compositor->SetCursorName("default");
     compositor->cursor_hidden_by_touch_ = false;
   }
   double delta_x = event->delta_x;
@@ -3474,13 +3476,15 @@ void CompositorPrivate::OnCursorMotion(CompositorPrivate* compositor,
     compositor->protocol_manager_->MoveDrag();
   }
   compositor->ProcessCursorMotion(event->time_msec);
+  if (compositor->shake_cursor_ != nullptr) {
+    compositor->shake_cursor_->HandleMotion();
+  }
 }
 
 void CompositorPrivate::OnCursorMotionAbsolute(
     CompositorPrivate* compositor, wlr_pointer_motion_absolute_event* event) {
   if (compositor->cursor_hidden_by_touch_) {
-    wlr_cursor_set_xcursor(compositor->cursor_, compositor->cursor_manager_,
-                           "default");
+    compositor->SetCursorName("default");
     compositor->cursor_hidden_by_touch_ = false;
   }
   double layout_x = 0;
@@ -3501,13 +3505,15 @@ void CompositorPrivate::OnCursorMotionAbsolute(
     compositor->protocol_manager_->MoveDrag();
   }
   compositor->ProcessCursorMotion(event->time_msec);
+  if (compositor->shake_cursor_ != nullptr) {
+    compositor->shake_cursor_->HandleMotion();
+  }
 }
 
 void CompositorPrivate::OnCursorButton(CompositorPrivate* compositor,
                                        wlr_pointer_button_event* event) {
   if (event->pointer != nullptr && compositor->cursor_hidden_by_touch_) {
-    wlr_cursor_set_xcursor(compositor->cursor_, compositor->cursor_manager_,
-                           "default");
+    compositor->SetCursorName("default");
     compositor->cursor_hidden_by_touch_ = false;
   }
   if (compositor->protocol_manager_ != nullptr) {
@@ -3728,8 +3734,7 @@ void CompositorPrivate::OnCursorButton(CompositorPrivate* compositor,
 void CompositorPrivate::OnCursorAxis(CompositorPrivate* compositor,
                                      wlr_pointer_axis_event* event) {
   if (event->pointer != nullptr && compositor->cursor_hidden_by_touch_) {
-    wlr_cursor_set_xcursor(compositor->cursor_, compositor->cursor_manager_,
-                           "default");
+    compositor->SetCursorName("default");
     compositor->cursor_hidden_by_touch_ = false;
   }
   if (compositor->protocol_manager_ != nullptr) {
@@ -3812,7 +3817,7 @@ void CompositorPrivate::OnTouchDown(CompositorPrivate* compositor,
     return;
   }
   compositor->cursor_hidden_by_touch_ = true;
-  wlr_cursor_unset_image(compositor->cursor_);
+  compositor->UnsetCursorImage();
 
   double surface_x = 0;
   double surface_y = 0;
@@ -3846,7 +3851,7 @@ void CompositorPrivate::OnTouchDown(CompositorPrivate* compositor,
                   });
   if (mode == TouchPointMode::kIgnored && !pointer_in_use) {
     compositor->ProcessCursorMotion(event->time_msec);
-    wlr_cursor_unset_image(compositor->cursor_);
+    compositor->UnsetCursorImage();
     compositor->SendPointerTouchButton(event->time_msec,
                                        WL_POINTER_BUTTON_STATE_PRESSED);
     mode = TouchPointMode::kPointer;
@@ -3942,7 +3947,7 @@ void CompositorPrivate::OnTouchMotion(CompositorPrivate* compositor,
       compositor->protocol_manager_->NotifyPointer(event->time_msec);
     }
     compositor->ProcessCursorMotion(event->time_msec);
-    wlr_cursor_unset_image(compositor->cursor_);
+    compositor->UnsetCursorImage();
     compositor->touch_pointer_frame_pending_ = true;
   } else if (point->mode == TouchPointMode::kSelector &&
              compositor->window_selector_ != nullptr) {
@@ -4018,17 +4023,76 @@ void CompositorPrivate::OnRequestCursor(
     wlr_seat_pointer_request_set_cursor_event* event) {
   // Only the focused client is allowed to replace the cursor surface.
   if (compositor->seat_->pointer_state.focused_client == event->seat_client) {
-    wlr_cursor_set_surface(compositor->cursor_, event->surface,
-                           event->hotspot_x, event->hotspot_y);
+    compositor->SetCursorSurface(event->surface, event->hotspot_x,
+                                 event->hotspot_y);
   }
+}
+
+void CompositorPrivate::SetCursorName(const char* name) {
+  cursor_surface_destroy_.Disconnect();
+  cursor_image_ = {.kind = CursorImage::Kind::kName, .name = name};
+  if (!cursor_image_locked_) ApplyCursorImage();
+}
+
+void CompositorPrivate::SetCursorSurface(wlr_surface* surface,
+                                         int32_t hotspot_x, int32_t hotspot_y) {
+  cursor_surface_destroy_.Disconnect();
+  if (surface == nullptr) {
+    cursor_image_ = {.kind = CursorImage::Kind::kNone};
+  } else {
+    cursor_image_ = {.kind = CursorImage::Kind::kSurface,
+                     .surface = surface,
+                     .hotspot_x = hotspot_x,
+                     .hotspot_y = hotspot_y};
+    cursor_surface_destroy_.Connect(&surface->events.destroy);
+  }
+  if (!cursor_image_locked_) ApplyCursorImage();
+}
+
+void CompositorPrivate::UnsetCursorImage() {
+  cursor_surface_destroy_.Disconnect();
+  cursor_image_ = {.kind = CursorImage::Kind::kNone};
+  if (!cursor_image_locked_) ApplyCursorImage();
+}
+
+void CompositorPrivate::LockCursorImage(bool locked) {
+  if (cursor_image_locked_ == locked) return;
+  cursor_image_locked_ = locked;
+  if (locked) {
+    wlr_cursor_unset_image(cursor_);
+  } else {
+    ApplyCursorImage();
+  }
+}
+
+void CompositorPrivate::ApplyCursorImage() {
+  switch (cursor_image_.kind) {
+    case CursorImage::Kind::kName:
+      wlr_cursor_set_xcursor(cursor_, cursor_manager_,
+                             cursor_image_.name.c_str());
+      break;
+    case CursorImage::Kind::kSurface:
+      wlr_cursor_set_surface(cursor_, cursor_image_.surface,
+                             cursor_image_.hotspot_x, cursor_image_.hotspot_y);
+      break;
+    case CursorImage::Kind::kNone:
+      wlr_cursor_unset_image(cursor_);
+      break;
+  }
+}
+
+void CompositorPrivate::OnCursorSurfaceDestroy(CompositorPrivate* compositor,
+                                               void*) {
+  // wlr_cursor drops a destroyed cursor surface on its own; only forget it.
+  compositor->cursor_surface_destroy_.Disconnect();
+  compositor->cursor_image_ = {.kind = CursorImage::Kind::kNone};
 }
 
 void CompositorPrivate::OnPointerFocusChange(
     CompositorPrivate* compositor, wlr_seat_pointer_focus_change_event* event) {
   // Restore the default cursor after leaving all client surfaces.
   if (event->new_surface == nullptr) {
-    wlr_cursor_set_xcursor(compositor->cursor_, compositor->cursor_manager_,
-                           "default");
+    compositor->SetCursorName("default");
   }
   if (compositor->protocol_manager_ != nullptr) {
     compositor->protocol_manager_->UpdatePointerFocus(event->new_surface);
@@ -4490,6 +4554,7 @@ void CompositorPrivate::Destroy() {
   window_selector_.reset();
   input_method_relay_.reset();
   touch_feedback_.reset();
+  shake_cursor_.reset();
 
   // Clear scene nodes.
   if (scene_ != nullptr) {

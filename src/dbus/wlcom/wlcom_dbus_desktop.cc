@@ -363,6 +363,76 @@ void WlcomDbusManager::ApplyBlurEffect() {
       options.value(QStringLiteral("blur_strength")).toInt(4));
 }
 
+void WlcomDbusManager::ApplyEffectState(const QString& name) {
+  if (name == QStringLiteral("blur")) {
+    ApplyBlurEffect();
+  } else if (name == QStringLiteral("shake_cursor") && compositor_ != nullptr &&
+             compositor_->shake_cursor_ != nullptr) {
+    compositor_->shake_cursor_->SetEnabled(EffectEnabled(name));
+  }
+}
+
+// GXWM's MouseFinder SetEnabled: switch the shake_cursor effect, persist its
+// enabled option and mirror it to UKUI's mouse settings.
+void WlcomDbusManager::SetMouseFinderEnabled(bool enabled,
+                                             bool mirror_to_gsettings) {
+  const QString name = QStringLiteral("shake_cursor");
+  effect_enabled_[name] = enabled;
+  ApplyEffectState(name);
+  QJsonObject options = EffectOptions(name);
+  options[QStringLiteral("enabled")] = enabled;
+  QJsonObject effects = config_.value(QStringLiteral("Effects")).toObject();
+  effects[name] = options;
+  config_[QStringLiteral("Effects")] = effects;
+  SaveConfig();
+#ifdef FLAKEWM_HAS_QGSETTINGS
+  if (mirror_to_gsettings && mouse_settings_ != nullptr &&
+      mouse_settings_->keys().contains(QStringLiteral("shakeCursor"))) {
+    mouse_settings_->trySet(QStringLiteral("shakeCursor"), enabled);
+  }
+#else
+  (void)mirror_to_gsettings;
+#endif
+}
+
+void WlcomDbusManager::SetupMouseSettings() {
+#ifdef FLAKEWM_HAS_QGSETTINGS
+  constexpr char kSchema[] = "org.ukui.peripherals-mouse";
+  if (!QGSettings::isSchemaInstalled(kSchema)) return;
+  mouse_settings_ = std::make_unique<QGSettings>(kSchema);
+  QObject::connect(
+      mouse_settings_.get(), &QGSettings::changed, this,
+      [this](const QString& key) {
+        if (key != QStringLiteral("shakeCursor") &&
+            key != QStringLiteral("shake-cursor")) {
+          return;
+        }
+        const bool enabled =
+            mouse_settings_->get(QStringLiteral("shakeCursor")).toBool();
+        if (enabled != EffectEnabled(QStringLiteral("shake_cursor"))) {
+          SetMouseFinderEnabled(enabled, false);
+        }
+      });
+#endif
+}
+
+bool WlcomDbusManager::HandleMouseFinder(const QDBusMessage& message) {
+  if (message.member() == QStringLiteral("GetEnabled")) {
+    Reply(message, {EffectEnabled(QStringLiteral("shake_cursor"))});
+    return true;
+  }
+  if (message.member() == QStringLiteral("SetEnabled")) {
+    if (message.signature() != QStringLiteral("b")) {
+      Error(message, kInvalidArgs, QStringLiteral("Expected boolean."));
+      return true;
+    }
+    SetMouseFinderEnabled(message.arguments().value(0).toBool(), true);
+    Reply(message, {true});
+    return true;
+  }
+  return false;
+}
+
 bool WlcomDbusManager::HandleEffect(const QDBusMessage& message) {
   const QVariantList args = message.arguments();
   if (message.member() == QStringLiteral("ListAllEffects")) {
@@ -383,7 +453,7 @@ bool WlcomDbusManager::HandleEffect(const QDBusMessage& message) {
       return true;
     }
     effect_enabled_[name] = args.value(1).toBool();
-    if (name == QStringLiteral("blur")) ApplyBlurEffect();
+    ApplyEffectState(name);
     Reply(message);
     return true;
   }

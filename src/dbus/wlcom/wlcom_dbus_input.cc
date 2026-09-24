@@ -648,7 +648,9 @@ bool WlcomDbusManager::HandleSeat(const QDBusMessage& message) {
     }
     wlr_xcursor_manager_destroy(compositor_->cursor_manager_);
     compositor_->cursor_manager_ = manager;
-    wlr_cursor_set_xcursor(compositor_->cursor_, manager, "default");
+    compositor_->SetCursorName("default");
+    if (compositor_->shake_cursor_ != nullptr)
+      compositor_->shake_cursor_->ReloadImage();
     seat[QStringLiteral("cursor_theme")] = args[1].toString();
     seat[QStringLiteral("cursor_size")] = static_cast<int>(args[2].toUInt());
     persist_seat();

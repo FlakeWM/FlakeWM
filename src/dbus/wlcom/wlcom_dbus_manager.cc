@@ -114,6 +114,7 @@ bool WlcomDbusManager::Start() {
   }
   components_.push_back(std::move(built_in));
   LoadEffectState();
+  SetupMouseSettings();
   const bool core_name = RegisterNames();
   const bool objects = RegisterObjects();
   if (compositor_ != nullptr && compositor_->protocol_manager_ != nullptr) {
@@ -126,6 +127,7 @@ bool WlcomDbusManager::Start() {
         });
     ApplyBlurEffect();
   }
+  ApplyEffectState(QStringLiteral("shake_cursor"));
   return core_name && objects;
 }
 
@@ -339,7 +341,7 @@ void WlcomDbusManager::RemoveOutput(wlr_output* output) {
 }
 
 bool WlcomDbusManager::RegisterNames() {
-  static constexpr std::array<const char*, 10> names = {
+  static constexpr std::array<const char*, 11> names = {
       kKylinService,
       "top.gxde.Wlcom",
       "top.gxde.Wlcom.Screen",
@@ -347,6 +349,7 @@ bool WlcomDbusManager::RegisterNames() {
       "top.gxde.Wlcom.Theme",
       "top.gxde.Wlcom.WindowBtn",
       "top.gxde.Wlcom.WindowCorner",
+      "top.gxde.Wlcom.MouseFinder",
       "org.kde.KWin",
       "org.ukui.KWin",
       "org.kde.KWin.PresentWindows"};
@@ -393,6 +396,7 @@ bool WlcomDbusManager::RegisterObjects() {
       {"/top/gxde/Wlcom/Theme", QDBusConnection::SingleNode},
       {"/top/gxde/Wlcom/WindowBtn", QDBusConnection::SingleNode},
       {"/top/gxde/Wlcom/WindowCorner", QDBusConnection::SingleNode},
+      {"/top/gxde/Wlcom/MouseFinder", QDBusConnection::SingleNode},
       {"/Screenshot", QDBusConnection::SingleNode},
       {"/Watermark", QDBusConnection::SingleNode},
       {"/Clipboard", QDBusConnection::SingleNode},
@@ -627,6 +631,10 @@ QString WlcomDbusManager::introspect(const QString& path) const {
                                 Method("PrintEffectOptions", "s", "s") +
                                 Method("SetEffectOption", "s s v"));
   }
+  if (path == QStringLiteral("/top/gxde/Wlcom/MouseFinder"))
+    return Interface(
+        "top.gxde.Wlcom.MouseFinder",
+        Method("GetEnabled", "", "b") + Method("SetEnabled", "b", "b"));
   if (path == QStringLiteral("/com/kylin/Wlcom/Plugin"))
     return Interface("com.kylin.Wlcom.Plugin",
                      Method("ListAllPlugins", "b", "a(sbb)") +
@@ -774,6 +782,8 @@ bool WlcomDbusManager::handleMessage(const QDBusMessage& message,
       interface.startsWith(QStringLiteral("top.gxde.Wlcom."))) {
     if (interface == QStringLiteral("top.gxde.Wlcom.Effect"))
       return HandleEffect(message);
+    if (interface == QStringLiteral("top.gxde.Wlcom.MouseFinder"))
+      return HandleMouseFinder(message);
     if (interface == QStringLiteral("top.gxde.Wlcom.Screenshot"))
       return HandleScreenshot(message);
     return HandleTheme(message);

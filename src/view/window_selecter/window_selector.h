@@ -64,9 +64,11 @@ class WindowSelector final {
       Mode mode, double layout_x, double layout_y, wlr_surface* mask)>;
   using Done = std::function<void(std::optional<Selection>)>;
 
+  // Sets a named cursor image through the compositor, bye bye XCursor!!
+  using SetCursor = std::function<void(const char* name)>;
+
   WindowSelector(wlr_scene_tree* overlay_parent, wlr_seat* seat,
-                 wlr_cursor* cursor, wlr_xcursor_manager* cursor_manager,
-                 HitTest hit_test);
+                 wlr_cursor* cursor, SetCursor set_cursor, HitTest hit_test);
   ~WindowSelector();
 
   WindowSelector(const WindowSelector&) = delete;
@@ -100,7 +102,7 @@ class WindowSelector final {
   std::unique_ptr<WindowSelectorToolbarRenderer> toolbar_renderer_;
   wlr_seat* seat_ = nullptr;
   wlr_cursor* cursor_ = nullptr;
-  wlr_xcursor_manager* cursor_manager_ = nullptr;
+  SetCursor set_cursor_;
   HitTest hit_test_;
   Done done_;
   std::optional<Target> current_;
