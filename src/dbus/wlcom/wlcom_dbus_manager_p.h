@@ -611,6 +611,12 @@ struct WlcomDbusManager::InputDevice {
   wlr_input_device* device;
   QString name;
   QString sys_name;
+
+  // Stop exporting the KDE Input device for non-libinput devices.
+  // They don't have a sysname, we could give them fake ones,
+  // but considering that Open Kylin Wlcom/GXDE Wlcom's design we
+  // just don't broadcast it.
+  bool libinput = false;
   quint32 properties = 0;
   quint32 keymap_group = 0;
   utils::SignalListener<InputDevice, void> destroy;

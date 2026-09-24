@@ -679,6 +679,8 @@ QString WlcomDbusManager::introspect(const QString& path) const {
                          Signal("deviceAdded", "s") +
                          Signal("deviceRemoved", "s"));
   if (path.startsWith(QStringLiteral("/org/kde/KWin/InputDevice/"))) {
+    const QString prefix = QStringLiteral("/org/kde/KWin/InputDevice/");
+    if (FindKdeInput(path.mid(prefix.size())) == nullptr) return {};
     QString body;
     for (const auto& prop : std::to_array<std::pair<const char*, const char*>>(
              {{"pointer", "b"},

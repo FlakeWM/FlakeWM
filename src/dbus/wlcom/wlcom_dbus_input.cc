@@ -34,9 +34,11 @@ void WlcomDbusManager::AddInput(wlr_input_device* device) {
   libinput_device* libinput = nullptr;
   if (wlr_input_device_is_libinput(device)) {
     libinput = wlr_libinput_get_device_handle(device);
-    if (libinput != nullptr)
+    if (libinput != nullptr) {
       input->sys_name =
           QString::fromUtf8(libinput_device_get_sysname(libinput));
+      input->libinput = true;
+    }
   }
   if (input->sys_name.isEmpty())
     input->sys_name = QStringLiteral("flakewm-%1")
@@ -121,6 +123,7 @@ void WlcomDbusManager::AddInput(wlr_input_device* device) {
     input->name = base_name + QStringLiteral("_%1").arg(++suffix);
   }
   const QString sys_name = input->sys_name;
+  const bool kde_exported = input->libinput;
   input->destroy.Connect(&device->events.destroy);
   if (device->type == WLR_INPUT_DEVICE_KEYBOARD) {
     wlr_keyboard* keyboard = wlr_keyboard_from_input_device(device);
@@ -133,20 +136,25 @@ void WlcomDbusManager::AddInput(wlr_input_device* device) {
              QStringLiteral("com.kylin.Wlcom.Input"),
              QStringLiteral("input_create"),
              {inputs_.back()->name, inputs_.back()->properties});
-  EmitSignal(QStringLiteral("/org/kde/KWin/InputDevice"),
-             QStringLiteral("org.kde.KWin.InputDeviceManager"),
-             QStringLiteral("deviceAdded"), {sys_name});
+  if (kde_exported) {
+    EmitSignal(QStringLiteral("/org/kde/KWin/InputDevice"),
+               QStringLiteral("org.kde.KWin.InputDeviceManager"),
+               QStringLiteral("deviceAdded"), {sys_name});
+  }
 }
 
 void WlcomDbusManager::RemoveInput(InputDevice* input) {
   if (input == nullptr) return;
   const QString sys_name = input->sys_name;
   const QString name = input->name;
+  const bool kde_exported = input->libinput;
   std::erase_if(inputs_,
                 [input](const auto& item) { return item.get() == input; });
-  EmitSignal(QStringLiteral("/org/kde/KWin/InputDevice"),
-             QStringLiteral("org.kde.KWin.InputDeviceManager"),
-             QStringLiteral("deviceRemoved"), {sys_name});
+  if (kde_exported) {
+    EmitSignal(QStringLiteral("/org/kde/KWin/InputDevice"),
+               QStringLiteral("org.kde.KWin.InputDeviceManager"),
+               QStringLiteral("deviceRemoved"), {sys_name});
+  }
   EmitSignal(QStringLiteral("/com/kylin/Wlcom/Input"),
              QStringLiteral("com.kylin.Wlcom.Input"),
              QStringLiteral("input_destroy"), {name});
@@ -158,6 +166,16 @@ WlcomDbusManager::InputDevice* WlcomDbusManager::FindInput(
     if (input->device != nullptr &&
         (input->name == name || input->sys_name == name ||
          QString::fromUtf8(input->device->name) == name))
+      return input.get();
+  }
+  return nullptr;
+}
+
+WlcomDbusManager::InputDevice* WlcomDbusManager::FindKdeInput(
+    const QString& sys_name) const {
+  for (const auto& input : inputs_) {
+    if (input->device != nullptr && input->libinput &&
+        input->sys_name == sys_name)
       return input.get();
   }
   return nullptr;

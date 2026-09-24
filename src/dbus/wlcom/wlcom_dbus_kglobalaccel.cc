@@ -427,7 +427,7 @@ bool WlcomDbusManager::HandleProperties(const QDBusMessage& message) {
   auto device_for_path = [&]() -> InputDevice* {
     const QString prefix = QStringLiteral("/org/kde/KWin/InputDevice/");
     if (!message.path().startsWith(prefix)) return nullptr;
-    return FindInput(message.path().mid(prefix.size()));
+    return FindKdeInput(message.path().mid(prefix.size()));
   };
   auto value_for = [&](const QString& property, bool* found) -> QVariant {
     *found = true;
@@ -441,7 +441,8 @@ bool WlcomDbusManager::HandleProperties(const QDBusMessage& message) {
         property == QStringLiteral("devicesSysNames")) {
       QStringList names;
       for (const auto& input : inputs_)
-        if (input->device != nullptr) names << input->sys_name;
+        if (input->device != nullptr && input->libinput)
+          names << input->sys_name;
       return names;
     }
     if (interface == QStringLiteral("org.kde.kglobalaccel.Component")) {

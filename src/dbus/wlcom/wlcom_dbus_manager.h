@@ -129,6 +129,7 @@ class WlcomDbusManager final : public QDBusVirtualObject {
   bool HandleProperties(const QDBusMessage& message);
 
   InputDevice* FindInput(const QString& name) const;
+  InputDevice* FindKdeInput(const QString& sys_name) const;
   wlr_output* FindOutput(const QString& name) const;
   bool ConfigureOutput(wlr_output* output, bool* enabled, double* scale,
                        wl_output_transform* transform, int width, int height,
