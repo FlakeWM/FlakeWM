@@ -113,6 +113,7 @@ bool WlcomDbusManager::Start() {
     }
   }
   components_.push_back(std::move(built_in));
+  LoadEffectState();
   const bool core_name = RegisterNames();
   const bool objects = RegisterObjects();
   if (compositor_ != nullptr && compositor_->protocol_manager_ != nullptr) {
@@ -123,13 +124,7 @@ bool WlcomDbusManager::Start() {
           return HandleGestureAction(type, device, direction, fingers, edge,
                                      stage, follow_direction, dx, dy);
         });
-    const QJsonObject blur = config_.value(QStringLiteral("Effects"))
-                                 .toObject()
-                                 .value(QStringLiteral("blur"))
-                                 .toObject();
-    compositor_->protocol_manager_->SetGlobalBlur(
-        blur.value(QStringLiteral("enabled")).toBool(true),
-        blur.value(QStringLiteral("blur_strength")).toInt(4));
+    ApplyBlurEffect();
   }
   return core_name && objects;
 }

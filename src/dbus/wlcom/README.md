@@ -81,8 +81,15 @@ are exported below `/component/<escaped-component-name>`.
   multitask request to the GXDE switch service used by this desktop stack.
 - KDE clipboard properties and signals report the PID owning the corresponding
   Wayland selection.  Active-app changes are forwarded to GXDE AppBridge.
-- Effect configuration is persistent; blur enable/strength changes are applied
-  immediately to existing and future KDE blur regions.
+- The Effect interface mirrors GXWM's registry of 21 effects, in its
+  `ListAllEffects` order.  `ListAllEffects` reports runtime state and
+  `EnableEffect` changes it without persisting; `SetEffectOption` checks the
+  option's type and each effect's `configure()` rules (e.g. `blur_strength`
+  1-15, `noise_strength` 0-14), then persists it, and an `enabled` option only
+  takes effect on the next start.  Blur enable/strength changes are applied
+  immediately to existing and future KDE blur regions.  The other effects,
+  and `noise_strength`, are stored for compatibility but have no FlakeWM
+  rendering behind them.
 - The compositor publishes its Wayland/X11 desktop variables through both
   `org.freedesktop.DBus.UpdateActivationEnvironment` and systemd's user manager.
 - UKUI settings-daemon services are discovered through D-Bus owner changes;

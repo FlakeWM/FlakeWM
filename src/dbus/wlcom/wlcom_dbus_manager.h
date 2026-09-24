@@ -142,6 +142,10 @@ class WlcomDbusManager final : public QDBusVirtualObject {
                             bool include_cursor, bool unscaled);
   bool SetGtkSetting(const QString& schema, const QString& key,
                      const QString& value) const;
+  QJsonObject EffectOptions(const QString& name) const;
+  bool EffectEnabled(const QString& name) const;
+  void LoadEffectState();
+  void ApplyBlurEffect();
 
   GlobalShortcutComponent* FindComponent(const QString& name);
   const GlobalShortcutComponent* FindComponent(const QString& name) const;
@@ -169,6 +173,9 @@ class WlcomDbusManager final : public QDBusVirtualObject {
   QHash<QString, QStringList> ukui_shortcut_blacklists_;
   QHash<QString, QStringList> ukui_shortcut_whitelists_;
   QSet<QString> ukui_shortcut_block_all_;
+  // Runtime effect state. EnableEffect only changes this, like GXWM; the
+  // persisted "enabled" option is read at startup.
+  QHash<QString, bool> effect_enabled_;
   bool show_desktop_ = false;
   bool shortcuts_blocked_ = false;
   int clipboard_pid_ = 0;

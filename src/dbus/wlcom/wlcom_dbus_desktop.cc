@@ -23,6 +23,8 @@
  * Original code is modified to adapt C++ and Wlroots 0.20.2.
  */
 
+#include <optional>
+
 #include "src/dbus/wlcom/wlcom_dbus_manager_p.h"
 
 namespace flakewm {
@@ -178,85 +180,254 @@ bool WlcomDbusManager::HandleTheme(const QDBusMessage& message) {
   return false;
 }
 
-bool WlcomDbusManager::HandleEffect(const QDBusMessage& message) {
-  struct EffectDefinition {
-    const char* name;
-    quint32 priority;
-    bool enabled;
-  };
+namespace {
 
-  // Source effects from GXWM
-  static constexpr std::array effects = {
-      EffectDefinition{"transform_effect", 98U, true},
-      EffectDefinition{"zoom", 122U, false},
-      EffectDefinition{"locate_pointer", 111U, false},
-      EffectDefinition{"shake_view", 0U, true},
-      EffectDefinition{"shake_cursor", 110U, false},
-      EffectDefinition{"translation", 105U, true},
-      EffectDefinition{"slide", 5U, true},
-      EffectDefinition{"fade", 10U, true},
-      EffectDefinition{"scale", 5U, true},
-      EffectDefinition{"move", 0U, false},
-      EffectDefinition{"watermark", 0U, true},
-      EffectDefinition{"showfps", 0U, false}};
-  QJsonObject values = config_.value(QStringLiteral("Effects")).toObject();
-  auto known = [](const QString& name) {
-    return std::any_of(effects.begin(), effects.end(),
-                       [&](const auto& item) { return name == item.name; });
-  };
+enum class EffectOptionType : uint8_t { kBool, kInt, kDouble, kString };
+
+struct EffectOptionDefault {
+  const char* key;
+  EffectOptionType type;
+  int value;
+};
+
+struct EffectDefinition {
+  const char* name;
+  quint32 priority;
+  bool enabled;
+  std::array<EffectOptionDefault, 2> options;
+  size_t option_count;
+};
+
+// GXWM's UI effect registry
+constexpr int kMaxZoomScale = 16;
+constexpr std::array kEffects = {
+    EffectDefinition{"transform_effect", 98U, true, {}, 0},
+    EffectDefinition{
+        "zoom", 122U, false, {{{"scale", EffectOptionType::kInt, 2}}}, 1},
+    EffectDefinition{"magic_lamp", 5U, true, {}, 0},
+    EffectDefinition{"locate_pointer", 111U, false, {}, 0},
+    EffectDefinition{"shake_view", 0U, true, {}, 0},
+    EffectDefinition{"shake_cursor", 110U, true, {}, 0},
+    EffectDefinition{"output_transform", 105U, true, {}, 0},
+    EffectDefinition{"translation", 105U, true, {}, 0},
+    EffectDefinition{"slide", 5U, true, {}, 0},
+    EffectDefinition{"fade", 10U, true, {}, 0},
+    EffectDefinition{"touch_trail", 100U, true, {}, 0},
+    EffectDefinition{"touch_long", 102U, true, {}, 0},
+    EffectDefinition{"touch_click", 100U, true, {}, 0},
+    EffectDefinition{"mouse_trail", 100U, false, {}, 0},
+    EffectDefinition{"mouse_click", 100U, false, {}, 0},
+    EffectDefinition{"soft_gamma", 150U, true, {}, 0},
+    EffectDefinition{"scale", 5U, true, {}, 0},
+    EffectDefinition{
+        "move", 0U, false, {{{"type", EffectOptionType::kInt, 0}}}, 1},
+    EffectDefinition{"watermark", 0U, true, {}, 0},
+    EffectDefinition{"blur",
+                     0U,
+                     true,
+                     {{{"blur_strength", EffectOptionType::kInt, 4},
+                       {"noise_strength", EffectOptionType::kInt, 0}}},
+                     2},
+    EffectDefinition{"showfps",
+                     0U,
+                     false,
+                     {{{"always_repaint", EffectOptionType::kBool, 1}}},
+                     1},
+};
+
+const EffectDefinition* FindEffect(const QString& name) {
+  const auto found =
+      std::find_if(kEffects.begin(), kEffects.end(),
+                   [&](const auto& effect) { return name == effect.name; });
+  return found == kEffects.end() ? nullptr : &*found;
+}
+
+// json-c keeps integers and doubles apart; QJsonValue does not, so declared
+// options use their registry type and anything else is inferred.
+std::optional<EffectOptionType> StoredOptionType(const EffectDefinition& effect,
+                                                 const QString& key,
+                                                 const QJsonValue& value) {
+  if (key == QStringLiteral("enabled")) return EffectOptionType::kBool;
+  for (size_t i = 0; i < effect.option_count; ++i) {
+    if (key == effect.options[i].key) return effect.options[i].type;
+  }
+  if (value.isBool()) return EffectOptionType::kBool;
+  if (value.isString()) return EffectOptionType::kString;
+  if (value.isDouble()) {
+    const double number = value.toDouble();
+    return number == std::trunc(number) ? EffectOptionType::kInt
+                                        : EffectOptionType::kDouble;
+  }
+  return std::nullopt;
+}
+
+std::optional<EffectOptionType> VariantOptionType(const QVariant& value) {
+  switch (value.metaType().id()) {
+    case QMetaType::Bool:
+      return EffectOptionType::kBool;
+    case QMetaType::Int:
+      return EffectOptionType::kInt;
+    case QMetaType::Double:
+      return EffectOptionType::kDouble;
+    case QMetaType::QString:
+      return EffectOptionType::kString;
+    default:
+      return std::nullopt;
+  }
+}
+
+// Mirrors each GXWM effect's configure() handler.
+bool ConfigureEffect(const EffectDefinition& effect, const QString& key,
+                     const QJsonValue& value, const QJsonObject& options) {
+  const QString name = QString::fromLatin1(effect.name);
+  if (name == QStringLiteral("shake_view")) return true;
+  if (name == QStringLiteral("showfps")) {
+    return key == QStringLiteral("always_repaint") &&
+           value.toBool() != options.value(key).toBool();
+  }
+  if (key == QStringLiteral("enabled")) return true;
+  if (name == QStringLiteral("blur")) {
+    const int number = value.toInt();
+    if (key == QStringLiteral("blur_strength")) {
+      return number >= 1 && number <= 15;
+    }
+    if (key == QStringLiteral("noise_strength")) {
+      return number >= 0 && number <= 14;
+    }
+    return false;
+  }
+  if (name == QStringLiteral("move")) {
+    return key == QStringLiteral("type") &&
+           (value.toInt() == 0 || value.toInt() == 1);
+  }
+  if (name == QStringLiteral("zoom")) {
+    return key == QStringLiteral("scale") &&
+           value.toInt() != options.value(key).toInt() &&
+           value.toInt() <= kMaxZoomScale;
+  }
+  return false;
+}
+
+}  // namespace
+
+QJsonObject WlcomDbusManager::EffectOptions(const QString& name) const {
+  const EffectDefinition* effect = FindEffect(name);
+  if (effect == nullptr) return {};
+  QJsonObject options = system_config_.value(QStringLiteral("Effects"))
+                            .toObject()
+                            .value(name)
+                            .toObject();
+  const QJsonObject user = config_.value(QStringLiteral("Effects"))
+                               .toObject()
+                               .value(name)
+                               .toObject();
+  for (auto it = user.begin(); it != user.end(); ++it) {
+    options[it.key()] = it.value();
+  }
+  if (!options.contains(QStringLiteral("enabled"))) {
+    options[QStringLiteral("enabled")] = effect->enabled;
+  }
+  for (size_t i = 0; i < effect->option_count; ++i) {
+    const EffectOptionDefault& option = effect->options[i];
+    const QString key = QString::fromLatin1(option.key);
+    if (options.contains(key)) continue;
+    if (option.type == EffectOptionType::kBool) {
+      options[key] = option.value != 0;
+    } else {
+      options[key] = option.value;
+    }
+  }
+  return options;
+}
+
+void WlcomDbusManager::LoadEffectState() {
+  effect_enabled_.clear();
+  for (const auto& effect : kEffects) {
+    const QString name = QString::fromLatin1(effect.name);
+    effect_enabled_[name] =
+        EffectOptions(name).value(QStringLiteral("enabled")).toBool();
+  }
+}
+
+bool WlcomDbusManager::EffectEnabled(const QString& name) const {
+  return effect_enabled_.value(name, false);
+}
+
+void WlcomDbusManager::ApplyBlurEffect() {
+  if (compositor_ == nullptr || compositor_->protocol_manager_ == nullptr) {
+    return;
+  }
+  const QJsonObject options = EffectOptions(QStringLiteral("blur"));
+  compositor_->protocol_manager_->SetGlobalBlur(
+      EffectEnabled(QStringLiteral("blur")),
+      options.value(QStringLiteral("blur_strength")).toInt(4));
+}
+
+bool WlcomDbusManager::HandleEffect(const QDBusMessage& message) {
+  const QVariantList args = message.arguments();
   if (message.member() == QStringLiteral("ListAllEffects")) {
     QList<types::Effect> result;
-    for (const auto& effect : effects) {
-      const QJsonObject item =
-          values.value(QString::fromLatin1(effect.name)).toObject();
-      result << types::Effect{
-          QString::fromLatin1(effect.name), effect.priority,
-          item.value(QStringLiteral("enabled")).toBool(effect.enabled)};
+    for (const auto& effect : kEffects) {
+      const QString name = QString::fromLatin1(effect.name);
+      result << types::Effect{name, effect.priority, EffectEnabled(name)};
     }
     Reply(message, {DbusArray(result)});
     return true;
   }
-  const QVariantList args = message.arguments();
+
   const QString name = args.value(0).toString();
-  if (!known(name)) {
-    Error(message, kInvalidArgs, "Invalid effect name.");
-    return true;
-  }
-  QJsonObject item = values.value(name).toObject();
+  const EffectDefinition* effect = FindEffect(name);
   if (message.member() == QStringLiteral("EnableEffect")) {
-    item[QStringLiteral("enabled")] = args.value(1).toBool();
-    values[name] = item;
-    config_[QStringLiteral("Effects")] = values;
-    SaveConfig();
+    if (effect == nullptr) {
+      Error(message, kInvalidArgs, QStringLiteral("Invalid effect name."));
+      return true;
+    }
+    effect_enabled_[name] = args.value(1).toBool();
+    if (name == QStringLiteral("blur")) ApplyBlurEffect();
     Reply(message);
     return true;
   }
   if (message.member() == QStringLiteral("PrintEffectOptions")) {
-    if (!item.contains(QStringLiteral("enabled"))) {
-      const auto definition =
-          std::find_if(effects.begin(), effects.end(),
-                       [&](const auto& effect) { return name == effect.name; });
-      item[QStringLiteral("enabled")] = definition->enabled;
+    if (effect == nullptr) {
+      Error(message, kInvalidArgs,
+            QStringLiteral("Invalid effect name or no option."));
+      return true;
     }
-    Reply(message, {QString::fromUtf8(
-                       QJsonDocument(item).toJson(QJsonDocument::Compact))});
+    Reply(message, {QString::fromUtf8(QJsonDocument(EffectOptions(name))
+                                          .toJson(QJsonDocument::Compact))});
     return true;
   }
   if (message.member() == QStringLiteral("SetEffectOption")) {
-    if (args.size() != 3) {
-      Error(message, kInvalidArgs, "Invalid option.");
+    if (effect == nullptr) {
+      Error(message, kInvalidArgs, QStringLiteral("Invalid effect name."));
       return true;
     }
-    const QString option = args[1].toString();
-    const QVariant value = UnwrapVariant(args[2]);
-    if (!item.contains(option) || option == QStringLiteral("enabled")) {
-      Error(message, kInvalidArgs, "option not found or type error.");
+    const QString key = args.value(1).toString();
+    const QVariant value = UnwrapVariant(args.value(2));
+    const std::optional<EffectOptionType> type = VariantOptionType(value);
+    if (args.size() != 3 || !type.has_value()) {
+      Error(message, kInvalidArgs, QStringLiteral("Invalid option type."));
       return true;
     }
-    item[option] = QJsonValue::fromVariant(value);
-    values[name] = item;
-    config_[QStringLiteral("Effects")] = values;
+    QJsonObject options = EffectOptions(name);
+    if (!options.contains(key) ||
+        StoredOptionType(*effect, key, options.value(key)) != type) {
+      Error(message, kInvalidArgs,
+            QStringLiteral("option not found or type error."));
+      return true;
+    }
+    const QJsonValue json = QJsonValue::fromVariant(value);
+    if (!ConfigureEffect(*effect, key, json, options)) {
+      Error(message, kInvalidArgs,
+            QStringLiteral("Effect rejected option value."));
+      return true;
+    }
+    options[key] = json;
+    QJsonObject effects = config_.value(QStringLiteral("Effects")).toObject();
+    effects[name] = options;
+    config_[QStringLiteral("Effects")] = effects;
     SaveConfig();
+    if (name == QStringLiteral("blur")) ApplyBlurEffect();
     Reply(message);
     return true;
   }
