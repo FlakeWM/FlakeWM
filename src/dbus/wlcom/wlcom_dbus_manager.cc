@@ -588,7 +588,8 @@ QString WlcomDbusManager::introspect(const QString& path) const {
         Method("SetScrollFactor", "s d") +
         Method("GetDoubleClickTime", "s", "u u") +
         Method("SetDoubleClickTime", "s u") +
-        Signal("KeymapGroupChanged", "s u");
+        Signal("KeymapGroupChanged", "s u") + Signal("input_create", "s u") +
+        Signal("input_destroy", "s");
     return Interface("com.kylin.Wlcom.Input", body);
   }
   if (path == QStringLiteral("/com/kylin/Wlcom/Seat")) {
@@ -674,7 +675,9 @@ QString WlcomDbusManager::introspect(const QString& path) const {
                          Signal("primarySelectionPidChanged", "i"));
   if (path == QStringLiteral("/org/kde/KWin/InputDevice"))
     return Interface("org.kde.KWin.InputDeviceManager",
-                     Property("devicesSysNames", "as", "read"));
+                     Property("devicesSysNames", "as", "read") +
+                         Signal("deviceAdded", "s") +
+                         Signal("deviceRemoved", "s"));
   if (path.startsWith(QStringLiteral("/org/kde/KWin/InputDevice/"))) {
     QString body;
     for (const auto& prop : std::to_array<std::pair<const char*, const char*>>(
