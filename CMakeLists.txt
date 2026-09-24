@@ -241,6 +241,7 @@ set(flakewm_CXX_SOURCES
   src/protocol/treeland/treeland_app_id_resolver.cc
   src/protocol/treeland/treeland_capture.cc
   src/protocol/treeland/treeland_dde_shell.cc
+  src/protocol/treeland/treeland_color_scheme.cc
   src/protocol/treeland/treeland_personalization.cc
   src/protocol/treeland/treeland_protocol_manager.cc
   src/protocol/ukui/ukui_blur.cc

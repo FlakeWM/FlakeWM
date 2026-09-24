@@ -228,6 +228,8 @@ class PersonalizationGlobal final : public TreelandGlobal {
     return false;
   }
 
+  void BroadcastWindowThemeType() override { BroadcastAppearance(this, 4); }
+
  private:
   static void DestroyRequest(wl_client*, wl_resource* resource) {
     wl_resource_destroy(resource);
@@ -711,8 +713,7 @@ class PersonalizationGlobal final : public TreelandGlobal {
       return;
     }
     Context* context = Appearance(resource);
-    context->global->owner_->window_theme_type = value;
-    BroadcastAppearance(context->global, 4);
+    context->global->owner_->SetWindowThemeType(value);
   }
   static void AppearanceGetThemeType(wl_client*, wl_resource* resource) {
     Context* context = Appearance(resource);

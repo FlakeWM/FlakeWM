@@ -78,9 +78,20 @@ bool TreelandProtocolManagerImpl::Create(wl_display* new_display,
   globals.push_back(CreateTreelandDdeShellGlobal(this, display));
   globals.push_back(CreateTreelandPersonalizationGlobal(this, display));
   globals.push_back(CreateLegacyDdeShellGlobal(this, display));
+  color_scheme = std::make_unique<TreelandColorScheme>(
+      [this](uint32_t type) { SetWindowThemeType(type); });
+  color_scheme->Start();
   return std::all_of(globals.begin(), globals.end(), [](const auto& global) {
     return global != nullptr && global->IsValid();
   });
+}
+
+void TreelandProtocolManagerImpl::SetWindowThemeType(uint32_t type) {
+  if (window_theme_type == type) return;
+  window_theme_type = type;
+  for (const std::unique_ptr<TreelandGlobal>& global : globals) {
+    if (global != nullptr) global->BroadcastWindowThemeType();
+  }
 }
 
 wlr_cursor* TreelandProtocolManagerImpl::Cursor() const {

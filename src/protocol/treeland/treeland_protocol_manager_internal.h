@@ -30,6 +30,7 @@
 #include <string>
 #include <vector>
 
+#include "src/protocol/treeland/treeland_color_scheme.h"
 #include "src/protocol/treeland/treeland_protocol_manager.h"
 
 namespace flakewm {
@@ -48,6 +49,8 @@ class TreelandGlobal {
   // the compositor (gxde-wlcom's client_has_window_context). DTK2 clients use
   // only legacy dde_shell and never create a window context.
   virtual bool ClientHasWindowContext(wl_client* client) const { return false; }
+  // Sends the manager's current window_theme_type to every appearance context.
+  virtual void BroadcastWindowThemeType() {}
 };
 
 class TreelandProtocolManagerImpl final {
@@ -88,6 +91,7 @@ class TreelandProtocolManagerImpl final {
   // True when the DTK appearance context last reported a dark window theme
   // (TREELAND_PERSONALIZATION_APPEARANCE_CONTEXT_V1_THEME_TYPE_DARK == 4).
   bool IsDarkTheme() const { return window_theme_type == 4; }
+  void SetWindowThemeType(uint32_t type);
 
   core::CompositorPrivate* compositor;
   ProtocolManager* protocol_manager;
@@ -108,6 +112,7 @@ class TreelandProtocolManagerImpl final {
   uint32_t window_theme_type = 1;
   uint32_t window_titlebar_height = 28;
   std::string wallpaper_metadata;
+  std::unique_ptr<TreelandColorScheme> color_scheme;
 };
 
 std::unique_ptr<TreelandGlobal> CreateTreelandAppIdResolverGlobal(
