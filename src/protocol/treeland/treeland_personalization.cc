@@ -130,6 +130,10 @@ class PersonalizationGlobal final : public TreelandGlobal {
     int32_t titlebar = -1;
     bool shadow_enabled = false;
     bool shadow_set = false;
+    // Whether this context registered the surface's blur. Other protocols
+    // (org_kde_kwin_blur for DTK2 menus) can blur the same surface, so a
+    // context that never asked for blur must not clear it.
+    bool blur_applied = false;
     utils::SignalListener<WindowContext, void> map{this, OnMap};
     utils::SignalListener<WindowContext, void> commit{this, OnCommit};
     utils::SignalListener<WindowContext, void> destroy{this, OnSurfaceDestroy};
@@ -142,7 +146,7 @@ class PersonalizationGlobal final : public TreelandGlobal {
       // wlr_surface* whose stale entry can match an unrelated texture and smear
       // blur across the whole output (seen when a DTK menu closes after
       // clicking outside the window).
-      if (context->surface != nullptr) {
+      if (context->surface != nullptr && context->blur_applied) {
         context->global->owner_->SetBlur(context->surface, false);
       }
       context->map.Disconnect();
@@ -151,12 +155,17 @@ class PersonalizationGlobal final : public TreelandGlobal {
       context->surface = nullptr;
       if (context->resource != nullptr) wl_resource_destroy(context->resource);
     }
-    void Apply() const {
+    void Apply() {
       if (surface == nullptr) return;
-      global->owner_->SetBlur(
-          surface,
+      // Blur is re-registered on every commit so its region follows the
+      // surface size; it is cleared only on the transition away from blur.
+      const bool blur =
           blend_mode ==
-              TREELAND_PERSONALIZATION_WINDOW_CONTEXT_V1_BLEND_MODE_BLUR);
+          TREELAND_PERSONALIZATION_WINDOW_CONTEXT_V1_BLEND_MODE_BLUR;
+      if (blur || blur_applied) {
+        global->owner_->SetBlur(surface, blur);
+        blur_applied = blur;
+      }
       if (titlebar >= 0) {
         global->owner_->SetTitlebar(
             surface,
@@ -308,7 +317,7 @@ class PersonalizationGlobal final : public TreelandGlobal {
     context->map.Disconnect();
     context->commit.Disconnect();
     context->destroy.Disconnect();
-    if (context->surface != nullptr) {
+    if (context->surface != nullptr && context->blur_applied) {
       context->global->owner_->SetBlur(context->surface, false);
     }
     std::erase(context->global->windows_, context);
