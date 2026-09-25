@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=GXDE on FlakeWM
+Comment=GXDE desktop on the FlakeWM Wayland compositor
+Exec=/usr/bin/startgxde_flake
+TryExec=/usr/bin/startgxde_flake
+Type=Application
+DesktopNames=GXDE

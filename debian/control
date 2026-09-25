@@ -56,3 +56,11 @@ Depends:
  ${misc:Depends}
 Recommends: xwayland
 Description: Wlroots-based Wayland compositor for the Deepin/GXDE desktop.
+
+Package: gxde-flake-session
+Architecture: all
+Depends:
+ flakewm (>= ${source:Version}),
+ startgxde,
+ ${misc:Depends}
+Description: GXDE desktop environment launcher for FlakeWM.

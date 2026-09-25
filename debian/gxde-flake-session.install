@@ -1,0 +1,3 @@
+data/gxde-flake-session/gxde-flake.desktop usr/share/wayland-sessions/
+data/gxde-flake-session/startgxde_flake usr/bin/
+data/gxde-flake-session/config.json etc/flakewm/

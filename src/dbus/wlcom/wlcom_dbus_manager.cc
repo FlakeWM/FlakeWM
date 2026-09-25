@@ -422,11 +422,17 @@ bool WlcomDbusManager::RegisterObjects() {
 }
 
 void WlcomDbusManager::LoadConfig() {
-  QFile system_file(QStringLiteral("/etc/gxde-wlcom/config.json"));
-  if (system_file.open(QIODevice::ReadOnly)) {
+  // Compactiable to both GXWM's config system & our own.
+  for (const char* path :
+       {"/etc/flakewm/config.json", "/etc/gxde-wlcom/config.json"}) {
+    QFile system_file(QString::fromLatin1(path));
+    if (!system_file.open(QIODevice::ReadOnly)) continue;
     const QJsonDocument document =
         QJsonDocument::fromJson(system_file.readAll());
-    if (document.isObject()) system_config_ = document.object();
+    if (document.isObject()) {
+      system_config_ = document.object();
+      break;
+    }
   }
 
   QFile file(config_path_);

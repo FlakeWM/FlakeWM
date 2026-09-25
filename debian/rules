@@ -7,10 +7,13 @@ BUILDDIR := obj-$(DEB_HOST_MULTIARCH)
 %:
 	dh $@ --builddirectory=$(BUILDDIR)
 
-override_dh_auto_configure:
+override_dh_auto_configure-arch:
 	dh_auto_configure --builddirectory=$(BUILDDIR) -- \
 		-G Ninja \
 		-DCMAKE_BUILD_TYPE=RelWithDebInfo
+
+# gxde-flake-session (Architecture: all)
+override_dh_auto_configure-indep override_dh_auto_build-indep override_dh_auto_install-indep:
 
 # No automated test suite exists (tests/manual is empty); without this,
 # dh_auto_test runs `ninja test`, which has no target and aborts the build.
@@ -21,8 +24,11 @@ override_dh_auto_test:
 # 13). Those shared libraries must ship with the binary and be reachable via a
 # relative RUNPATH. bundle-vendored.sh copies them privately, rewrites the
 # RUNPATH and emits debian/shlibs.local for exactly the libraries it bundled.
-override_dh_auto_install:
-	dh_auto_install --builddirectory=$(BUILDDIR)
+#
+# With a second binary package (gxde-flake-session) dh_auto_install would stage
+# into debian/tmp; keep the compositor installing straight into its package.
+override_dh_auto_install-arch:
+	dh_auto_install --builddirectory=$(BUILDDIR) --destdir=debian/flakewm
 	debian/bundle-vendored.sh "$(CURDIR)/$(BUILDDIR)" "$(CURDIR)/debian/flakewm"
 
 # debian/shlibs.local maps the privately-bundled libraries to flakewm itself;

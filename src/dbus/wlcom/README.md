@@ -69,8 +69,9 @@ are exported below `/component/<escaped-component-name>`.
   execute with GXWM's original field names, key-code table and press/release
   ordering.  Touchpad and touchscreen gestures implement the original
   `trigger`, `after` and `stop` stages, follow thresholds/directions, finger
-  counts and touchscreen edge matching.  System defaults from
-  `/etc/gxde-wlcom/config.json`; FlakeWM writes user overrides to
+  counts and touchscreen edge matching.  System defaults come from
+  `/etc/flakewm/config.json` (shipped by `gxde-flake-session`), falling back
+  to GXWM's `/etc/gxde-wlcom/config.json`; FlakeWM writes user overrides to
   `~/.config/flakewm/config.json`.  The former
   `~/.config/flakewm/dbus.json` and GXWM's
   `~/.config/gxde-wlcom/config.json` are read as migration fallbacks.  The
