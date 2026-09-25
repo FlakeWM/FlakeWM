@@ -259,4 +259,24 @@ if [ -c /dev/vboxguest ] && [ -x /usr/bin/VBoxClient ]; then
     /usr/bin/VBoxClient --vmsvga >/dev/null 2>&1 || true
 fi
 
+# GXDM writes every Wayland session, whichever compositor it runs, to the same
+# ~/.local/share/gxdm/wayland-session.log, so the next login overwrites the
+# output of a crashed FlakeWM.  Keep one log per session, and the last 20.
+# -----------------------------------------------------------------------------
+# GXDM 将所有 Wayland 会话（无论使用哪个合成器）的输出都写入同一个
+# ~/.local/share/gxdm/wayland-session.log，下一次登录就会覆盖 FlakeWM 崩溃时的
+# 输出。此处为每个会话单独保存日志，并保留最近 20 份。
+log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/flakewm"
+if mkdir -p "$log_dir" 2>/dev/null; then
+    log_file="$log_dir/session-$(date +%Y%m%d-%H%M%S)-$$.log"
+    if : >>"$log_file" 2>/dev/null; then
+        ls -1t "$log_dir"/session-*.log 2>/dev/null | tail -n +21 |
+            while IFS= read -r old_log; do rm -f -- "$old_log"; done
+        ln -sfn "${log_file##*/}" "$log_dir/latest.log"
+        exec >>"$log_file" 2>&1
+    fi
+    unset log_file
+fi
+unset log_dir
+
 exec /usr/bin/flakewm -s /usr/bin/startdde "$@"
