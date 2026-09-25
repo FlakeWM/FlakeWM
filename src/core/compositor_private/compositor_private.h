@@ -446,6 +446,7 @@ class CompositorPrivate final {
   wlr_scene* scene_ = nullptr;
   bool scene_direct_scanout_default_ = true;
   bool scene_calculate_visibility_default_ = true;
+  bool scene_blur_active_ = false;
   bool scene_rounded_corners_active_ = false;
   wlr_scene_output_layout* scene_layout_ = nullptr;
   wlr_xdg_shell* xdg_shell_ = nullptr;

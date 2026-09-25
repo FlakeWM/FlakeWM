@@ -123,26 +123,26 @@ wlr_renderer* CreateRenderer(wlr_backend* backend) {
     return wlr_renderer_autocreate(backend);
   }
 
-  // Vulkan is the normal path and supports compositor-owned backdrop blur;
-  // GLES2 keeps unsupported GPUs usable.
-  if (setenv("WLR_RENDERER", "vulkan", 1) == 0) {
+  // GLES2 is the default; Vulkan (opt in with WLR_RENDERER=vulkan) is only
+  // tried when GLES2 is unavailable.
+  if (setenv("WLR_RENDERER", "gles2", 1) == 0) {
     if (wlr_renderer* renderer = wlr_renderer_autocreate(backend);
         renderer != nullptr) {
       unsetenv("WLR_RENDERER");
-      ABSL_LOG(INFO) << "Using Vulkan renderer";
+      ABSL_LOG(INFO) << "Using GLES2 renderer";
       return renderer;
     }
   }
 
-  ABSL_LOG(WARNING) << "Vulkan renderer unavailable, falling back to GLES2";
-  setenv("WLR_RENDERER", "gles2", 1);
+  ABSL_LOG(WARNING) << "GLES2 renderer unavailable, falling back to Vulkan";
+  setenv("WLR_RENDERER", "vulkan", 1);
   if (wlr_renderer* renderer = wlr_renderer_autocreate(backend);
       renderer != nullptr) {
     unsetenv("WLR_RENDERER");
     return renderer;
   }
 
-  ABSL_LOG(WARNING) << "GLES2 renderer unavailable, falling back to Pixman";
+  ABSL_LOG(WARNING) << "Vulkan renderer unavailable, falling back to Pixman";
   setenv("WLR_RENDERER", "pixman", 1);
   wlr_renderer* renderer = wlr_renderer_autocreate(backend);
   unsetenv("WLR_RENDERER");
@@ -991,6 +991,18 @@ void CompositorPrivate::UpdateBackdropBlurState() {
   // the whole surface as opaque.
   const bool rounded = backdrop_blur_renderer_ != nullptr &&
                        backdrop_blur_renderer_->HasRoundedCorners();
+  // Callers re-register blurs on every commit (treeland personalization does,
+  // so a blurred DTK6 window's region follows its size).  Damaging and
+  // scheduling every output for that would repaint and re-blur all of them at
+  // the refresh rate whenever one blurred client animates.
+  const bool changed = backdrop_blur_renderer_ != nullptr &&
+                       backdrop_blur_renderer_->TakeBlurChanged();
+  if (!changed && active == scene_blur_active_ &&
+      rounded == scene_rounded_corners_active_) {
+    return;
+  }
+  scene_blur_active_ = active;
+  scene_rounded_corners_active_ = rounded;
   scene_->WLR_PRIVATE.direct_scanout =
       active ? false : scene_direct_scanout_default_;
   scene_->WLR_PRIVATE.calculate_visibility =
@@ -1006,11 +1018,10 @@ void CompositorPrivate::RefreshRoundedCornerState() {
   }
   // Only re-run the (damaging) state update when a mask actually appears or
   // disappears; RebuildSurfaceClip runs on every geometry change.
-  const bool rounded = backdrop_blur_renderer_->HasRoundedCorners();
-  if (rounded == scene_rounded_corners_active_) {
+  if (backdrop_blur_renderer_->HasRoundedCorners() ==
+      scene_rounded_corners_active_) {
     return;
   }
-  scene_rounded_corners_active_ = rounded;
   UpdateBackdropBlurState();
 }
 

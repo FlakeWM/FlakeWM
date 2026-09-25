@@ -47,6 +47,8 @@ class BackdropBlurRenderer final {
   bool IsSupported() const;
   bool HasActiveBlur() const;
   bool HasRoundedCorners() const;
+  // Whether a blur was added, removed or changed since the last call.
+  bool TakeBlurChanged();
   void SetAllocator(wlr_allocator* allocator);
 
   // `offset` is gxde-wlcom's pyramid tap scale, not a pixel radius -- see

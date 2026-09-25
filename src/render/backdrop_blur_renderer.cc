@@ -287,17 +287,26 @@ class BackdropBlurRenderer::Impl {
     if (found == surfaces.end()) {
       surfaces.push_back(
           std::make_unique<SurfaceBlur>(surface, region, offset, iterations));
+      blur_changed = true;
       return;
     }
-    pixman_region32_copy(&(*found)->region, region);
-    (*found)->offset = offset;
-    (*found)->iterations = iterations;
+    SurfaceBlur& blur = **found;
+    if (blur.offset == offset && blur.iterations == iterations &&
+        pixman_region32_equal(&blur.region, region)) {
+      return;
+    }
+    pixman_region32_copy(&blur.region, region);
+    blur.offset = offset;
+    blur.iterations = iterations;
+    blur_changed = true;
   }
 
   void ClearSurfaceBlur(wlr_surface* surface) {
-    std::erase_if(surfaces, [surface](const auto& item) {
-      return item->surface == surface;
-    });
+    if (std::erase_if(surfaces, [surface](const auto& item) {
+          return item->surface == surface;
+        }) != 0) {
+      blur_changed = true;
+    }
   }
 
   void SetSurfaceRoundCorner(wlr_surface* surface,
@@ -335,17 +344,28 @@ class BackdropBlurRenderer::Impl {
     if (found == textures_blur.end()) {
       textures_blur.push_back(std::make_unique<TextureBlur>(
           owner, texture, region, offset, iterations));
+      blur_changed = true;
       return;
     }
-    (*found)->texture = texture;
-    pixman_region32_copy(&(*found)->region, region);
-    (*found)->offset = offset;
-    (*found)->iterations = iterations;
+    TextureBlur& blur = **found;
+    if (blur.texture == texture && blur.offset == offset &&
+        blur.iterations == iterations &&
+        pixman_region32_equal(&blur.region, region)) {
+      return;
+    }
+    blur.texture = texture;
+    pixman_region32_copy(&blur.region, region);
+    blur.offset = offset;
+    blur.iterations = iterations;
+    blur_changed = true;
   }
 
   void ClearTextureBlur(const void* owner) {
-    std::erase_if(textures_blur,
-                  [owner](const auto& item) { return item->owner == owner; });
+    if (std::erase_if(textures_blur, [owner](const auto& item) {
+          return item->owner == owner;
+        }) != 0) {
+      blur_changed = true;
+    }
   }
 
  private:
@@ -1051,6 +1071,9 @@ class BackdropBlurRenderer::Impl {
   std::vector<std::unique_ptr<SurfaceBlur>> surfaces;
   std::vector<std::unique_ptr<SurfaceRoundCorner>> round_corners;
   std::vector<std::unique_ptr<TextureBlur>> textures_blur;
+  // Set when a blur registration actually changes, so that re-registering an
+  // unchanged blur on every commit does not repaint every output.
+  bool blur_changed = false;
   GLuint program = 0;
   GLint image_uniform = -1;
   GLint direction_uniform = -1;
@@ -1109,6 +1132,10 @@ bool BackdropBlurRenderer::HasActiveBlur() const {
 
 bool BackdropBlurRenderer::HasRoundedCorners() const {
   return !impl_->round_corners.empty();
+}
+
+bool BackdropBlurRenderer::TakeBlurChanged() {
+  return std::exchange(impl_->blur_changed, false);
 }
 
 void BackdropBlurRenderer::SetAllocator(wlr_allocator* allocator) {
