@@ -204,6 +204,7 @@ set(flakewm_CXX_SOURCES
   src/dbus/wlcom/wlcom_dbus_screenshot.cc
   src/dbus/wlcom/wlcom_dbus_view.cc
   src/input/key_binding_manager.cc
+  src/input/selection_persist.cc
   src/input/touchpad_manager.cc
   src/render/backdrop_blur_renderer.cc
   src/render/vulkan_blur_pipeline.cc
@@ -295,6 +296,7 @@ add_executable(flakewm
   src/dbus/wlcom/wlcom_dbus_manager.h
   src/dbus/wlcom/wlcom_dbus_manager_p.h
   src/input/key_binding_manager.h
+  src/input/selection_persist.h
   src/input/touchpad_manager.h
   src/render/backdrop_blur_renderer.h
   src/render/vulkan_blur_pipeline.h

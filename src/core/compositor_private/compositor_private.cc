@@ -872,6 +872,8 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
   request_cursor_.Connect(&seat_->events.request_set_cursor);
   pointer_focus_change_.Connect(&seat_->pointer_state.events.focus_change);
   request_selection_.Connect(&seat_->events.request_set_selection);
+  selection_persist_ =
+      std::make_unique<input::SelectionPersist>(display_, seat_);
   request_primary_selection_.Connect(
       &seat_->events.request_set_primary_selection);
   wlr_seat_set_capabilities(seat_, WL_SEAT_CAPABILITY_POINTER);
@@ -4592,6 +4594,7 @@ void CompositorPrivate::Destroy() {
   keyboards_.clear();
   dbus_manager_.reset();
   key_binding_manager_.reset();
+  selection_persist_.reset();
   outputs_.clear();
 
   // The XWM owns a Wayland client.

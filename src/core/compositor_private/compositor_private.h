@@ -32,6 +32,7 @@
 
 #include "src/backend/backend/backend.h"
 #include "src/input/key_binding_manager.h"
+#include "src/input/selection_persist.h"
 #include "src/protocol/input_method/input_method_relay.h"
 #include "src/protocol/layer_shell/layer_surface.h"
 #include "src/protocol/protocol_manager/protocol_manager.h"
@@ -472,6 +473,7 @@ class CompositorPrivate final {
   std::unique_ptr<protocol::InputMethodRelay> input_method_relay_;
   std::unique_ptr<protocol::ProtocolManager> protocol_manager_;
   std::unique_ptr<input::KeyBindingManager> key_binding_manager_;
+  std::unique_ptr<input::SelectionPersist> selection_persist_;
   std::unique_ptr<dbus::WlcomDbusManager> dbus_manager_;
   std::unique_ptr<view::TouchFeedback> touch_feedback_;
   std::unique_ptr<view::ShakeCursor> shake_cursor_;
