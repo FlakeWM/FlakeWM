@@ -40,6 +40,8 @@ extern "C" {
 #include <cmath>
 #include <cstdint>
 #include <memory>
+#include <utility>
+#include <vector>
 
 #include "absl/log/absl_log.h"
 #include "src/render/blur_kernel.h"
@@ -62,6 +64,12 @@ struct BlurSize {
   int height;
 };
 
+// Target chains are kept per render size, so that outputs of different sizes
+// sharing this pipeline do not reallocate each other's chain every frame.
+// Dropping a Vulkan render buffer waits for the whole GPU queue to go idle
+// (destroy_render_buffer in wlroots), so that churn stalls the event loop.
+constexpr size_t kMaxTargetSets = 4;
+
 }  // namespace
 
 class VulkanBlurPipeline::Impl {
@@ -69,6 +77,13 @@ class VulkanBlurPipeline::Impl {
   struct Target {
     wlr_buffer* buffer = nullptr;
     wlr_texture* texture = nullptr;
+  };
+
+  struct TargetSet {
+    int width = 0;
+    int height = 0;
+    std::vector<Target> levels;
+    Target scratch;
   };
 
   explicit Impl(wlr_renderer* new_renderer) : renderer(new_renderer) {}
@@ -106,9 +121,12 @@ class VulkanBlurPipeline::Impl {
 
     const float safe_offset = std::clamp(offset, 0.001F, 64.0F);
     const BlurPlan plan = PlanBlur(SigmaForBlurOffset(safe_offset, iterations));
-    if (!EnsureTargets(source->width, source->height)) {
+    const TargetSet* targets = EnsureTargets(source->width, source->height);
+    if (targets == nullptr) {
       return nullptr;
     }
+    const std::vector<Target>& levels = targets->levels;
+    const Target& scratch = targets->scratch;
 
     wlr_texture* source_texture = wlr_texture_from_buffer(renderer, source);
     if (source_texture == nullptr) {
@@ -208,23 +226,35 @@ class VulkanBlurPipeline::Impl {
   // shallower chain than the last one must not find itself half a chain's worth
   // of geometry short.  The levels past the coarse one simply go unused, and
   // together they cost a third of one full-resolution buffer.
-  bool CreateTargets(const wlr_drm_format* format, int width, int height) {
+  bool CreateTargets(const wlr_drm_format* format, TargetSet* set) {
     for (int i = 0; i <= kBlurMaxLevels; ++i) {
-      if (!CreateTarget(std::max(width >> i, 1), std::max(height >> i, 1),
-                        format, &levels.emplace_back())) {
+      if (!CreateTarget(std::max(set->width >> i, 1),
+                        std::max(set->height >> i, 1), format,
+                        &set->levels.emplace_back())) {
         return false;
       }
     }
-    return CreateTarget(width, height, format, &scratch);
+    return CreateTarget(set->width, set->height, format, &set->scratch);
   }
 
-  bool EnsureTargets(int width, int height) {
-    if (target_width == width && target_height == height && !levels.empty()) {
-      return true;
+  // Returns the chain for this size, most recently used last.  A miss evicts
+  // the least recently used chain once kMaxTargetSets are held.
+  const TargetSet* EnsureTargets(int width, int height) {
+    auto found =
+        std::find_if(target_sets.begin(), target_sets.end(),
+                     [width, height](const TargetSet& set) {
+                       return set.width == width && set.height == height;
+                     });
+    if (found != target_sets.end()) {
+      std::rotate(found, found + 1, target_sets.end());
+      return &target_sets.back();
     }
-    ClearTargets();
     if (!IsSupported()) {
-      return false;
+      return nullptr;
+    }
+    if (target_sets.size() >= kMaxTargetSets) {
+      DestroyTargetSet(&target_sets.front());
+      target_sets.erase(target_sets.begin());
     }
 
     const wlr_drm_format_set* formats = RenderFormats();
@@ -234,16 +264,16 @@ class VulkanBlurPipeline::Impl {
       if (format == nullptr) {
         continue;
       }
-      if (!CreateTargets(format, width, height)) {
-        ClearTargets();
+      TargetSet set = {.width = width, .height = height};
+      if (!CreateTargets(format, &set)) {
+        DestroyTargetSet(&set);
         continue;
       }
-      target_width = width;
-      target_height = height;
-      return true;
+      target_sets.push_back(std::move(set));
+      return &target_sets.back();
     }
     ABSL_LOG(ERROR) << "Failed to allocate Vulkan backdrop blur buffers";
-    return false;
+    return nullptr;
   }
 
   const wlr_drm_format_set* RenderFormats() const {
@@ -413,20 +443,20 @@ class VulkanBlurPipeline::Impl {
     }
   }
 
+  static void DestroyTargetSet(TargetSet* set) {
+    for (Target& target : set->levels) DestroyTarget(&target);
+    set->levels.clear();
+    DestroyTarget(&set->scratch);
+  }
+
   void ClearTargets() {
-    for (Target& target : levels) DestroyTarget(&target);
-    levels.clear();
-    DestroyTarget(&scratch);
-    target_width = 0;
-    target_height = 0;
+    for (TargetSet& set : target_sets) DestroyTargetSet(&set);
+    target_sets.clear();
   }
 
   wlr_renderer* renderer = nullptr;
   wlr_allocator* allocator = nullptr;
-  std::vector<Target> levels;
-  Target scratch;
-  int target_width = 0;
-  int target_height = 0;
+  std::vector<TargetSet> target_sets;
 };
 
 std::unique_ptr<VulkanBlurPipeline> VulkanBlurPipeline::Create(

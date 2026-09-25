@@ -44,7 +44,8 @@ class VulkanBlurPipeline final {
   bool IsSupported() const;
 
   // The returned texture remains owned by this pipeline and is valid until
-  // the allocator changes, the render size changes, or the pipeline dies.
+  // the allocator changes, the pipeline dies, or its render size's buffers
+  // are evicted by blurs at several other render sizes.
   wlr_texture* Render(wlr_buffer* source, float offset, int iterations);
 
  private:
