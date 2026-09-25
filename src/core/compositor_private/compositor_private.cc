@@ -341,7 +341,9 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
   if (output_layout_ == nullptr) {
     return Fail("Failed to create output layout");
   }
-  if (wlr_xdg_output_manager_v1_create(display_, output_layout_) == nullptr) {
+  xdg_output_manager_ =
+      wlr_xdg_output_manager_v1_create(display_, output_layout_);
+  if (xdg_output_manager_ == nullptr) {
     return Fail("Failed to create xdg-output manager");
   }
   if (wlr_presentation_create(display_, backend_, 2) == nullptr) {
@@ -3513,6 +3515,9 @@ void CompositorPrivate::ProcessCursorMotion(uint32_t time_msec) {
   }
   // Forward motion in surface-local coordinates.
   if (surface != nullptr) {
+    if (xwayland_ != nullptr) {
+      xwayland_->ToSurfaceX(surface, &surface_x, &surface_y);
+    }
     wlr_seat_pointer_notify_enter(seat_, surface, surface_x, surface_y);
     wlr_seat_pointer_notify_motion(seat_, time_msec, surface_x, surface_y);
   } else {
@@ -3894,6 +3899,9 @@ void CompositorPrivate::OnTouchDown(CompositorPrivate* compositor,
     if (compositor->protocol_manager_ != nullptr) {
       compositor->protocol_manager_->NotifyTouch(surface, event->time_msec);
     }
+    if (compositor->xwayland_ != nullptr) {
+      compositor->xwayland_->ToSurfaceX(surface, &surface_x, &surface_y);
+    }
     if (wlr_seat_touch_notify_down(compositor->seat_, surface, event->time_msec,
                                    event->touch_id, surface_x,
                                    surface_y) != 0) {
@@ -4000,9 +4008,15 @@ void CompositorPrivate::OnTouchMotion(CompositorPrivate* compositor,
         compositor->protocol_manager_->NotifyTouch(seat_point->surface,
                                                    event->time_msec);
       }
+      double surface_dx = delta_x;
+      double surface_dy = delta_y;
+      if (compositor->xwayland_ != nullptr) {
+        compositor->xwayland_->ToSurfaceX(seat_point->surface, &surface_dx,
+                                          &surface_dy);
+      }
       wlr_seat_touch_notify_motion(compositor->seat_, event->time_msec,
-                                   event->touch_id, seat_point->sx + delta_x,
-                                   seat_point->sy + delta_y);
+                                   event->touch_id, seat_point->sx + surface_dx,
+                                   seat_point->sy + surface_dy);
     }
   } else if (point->mode == TouchPointMode::kPointer) {
     if (compositor->protocol_manager_ != nullptr) {
@@ -4085,8 +4099,14 @@ void CompositorPrivate::OnRequestCursor(
     wlr_seat_pointer_request_set_cursor_event* event) {
   // Only the focused client is allowed to replace the cursor surface.
   if (compositor->seat_->pointer_state.focused_client == event->seat_client) {
-    compositor->SetCursorSurface(event->surface, event->hotspot_x,
-                                 event->hotspot_y);
+    int32_t hotspot_x = event->hotspot_x;
+    int32_t hotspot_y = event->hotspot_y;
+    if (compositor->xwayland_ != nullptr &&
+        compositor->xwayland_->OwnsClient(event->seat_client->client)) {
+      hotspot_x = compositor->xwayland_->FromX(hotspot_x);
+      hotspot_y = compositor->xwayland_->FromX(hotspot_y);
+    }
+    compositor->SetCursorSurface(event->surface, hotspot_x, hotspot_y);
   }
 }
 

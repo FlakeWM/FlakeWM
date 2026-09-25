@@ -102,8 +102,12 @@ wlr_box XSurface::Geometry() const {
   if (handle == nullptr) {
     return {};
   }
-  // X11 geometry is relative to root window.
-  return {.x = 0, .y = 0, .width = handle->width, .height = handle->height};
+
+  const XWaylandManager* xwayland = compositor->xwayland_.get();
+  return {.x = 0,
+          .y = 0,
+          .width = xwayland->FromX(handle->width),
+          .height = xwayland->FromX(handle->height)};
 }
 
 void XSurface::Configure(const wlr_box& box) const {
@@ -114,16 +118,21 @@ void XSurface::Configure(const wlr_box& box) const {
 
   wlr_scene_node_set_position(&scene_tree->node, box.x, box.y);
 
+  const XWaylandManager* xwayland = compositor->xwayland_.get();
+  const int x = xwayland->ToX(box.x);
+  const int y = xwayland->ToX(box.y);
+  const int width = xwayland->ToX(box.width);
+  const int height = xwayland->ToX(box.height);
   // X11 geometry uses 16-bit.
   constexpr int kMinCoordinate = std::numeric_limits<int16_t>::min();
   constexpr int kMaxCoordinate = std::numeric_limits<int16_t>::max();
   constexpr int kMaxDimension = std::numeric_limits<uint16_t>::max();
   wlr_xwayland_surface_configure(
       handle,
-      static_cast<int16_t>(std::clamp(box.x, kMinCoordinate, kMaxCoordinate)),
-      static_cast<int16_t>(std::clamp(box.y, kMinCoordinate, kMaxCoordinate)),
-      static_cast<uint16_t>(std::clamp(box.width, 1, kMaxDimension)),
-      static_cast<uint16_t>(std::clamp(box.height, 1, kMaxDimension)));
+      static_cast<int16_t>(std::clamp(x, kMinCoordinate, kMaxCoordinate)),
+      static_cast<int16_t>(std::clamp(y, kMinCoordinate, kMaxCoordinate)),
+      static_cast<uint16_t>(std::clamp(width, 1, kMaxDimension)),
+      static_cast<uint16_t>(std::clamp(height, 1, kMaxDimension)));
 }
 
 void XSurface::SetActivated(bool activated) const {
@@ -181,8 +190,10 @@ void XSurface::OnAssociate(XSurface* surface, void*) {
     return;
   }
   surface->scene_tree->node.data = surface;
-  wlr_scene_node_set_position(&surface->scene_tree->node, surface->handle->x,
-                              surface->handle->y);
+  const XWaylandManager* xwayland = surface->compositor->xwayland_.get();
+  wlr_scene_node_set_position(&surface->scene_tree->node,
+                              xwayland->FromX(surface->handle->x),
+                              xwayland->FromX(surface->handle->y));
   surface->compositor->RebuildSurfaceClip(surface);
   surface->map.Connect(&surface->handle->surface->events.map);
   surface->unmap.Connect(&surface->handle->surface->events.unmap);
@@ -228,10 +239,11 @@ void XSurface::OnRequestConfigure(XSurface* surface,
     return;
   }
 
-  surface->Configure({.x = event->x,
-                      .y = event->y,
-                      .width = event->width,
-                      .height = event->height});
+  const XWaylandManager* xwayland = surface->compositor->xwayland_.get();
+  surface->Configure({.x = xwayland->FromX(event->x),
+                      .y = xwayland->FromX(event->y),
+                      .width = xwayland->FromX(event->width),
+                      .height = xwayland->FromX(event->height)});
 }
 
 void XSurface::OnRequestResize(XSurface* surface,
@@ -274,8 +286,10 @@ void XSurface::OnSetGeometry(XSurface* surface, void*) {
     return;
   }
 
-  wlr_scene_node_set_position(&surface->scene_tree->node, surface->handle->x,
-                              surface->handle->y);
+  const XWaylandManager* xwayland = surface->compositor->xwayland_.get();
+  wlr_scene_node_set_position(&surface->scene_tree->node,
+                              xwayland->FromX(surface->handle->x),
+                              xwayland->FromX(surface->handle->y));
 }
 
 void XSurface::OnDestroy(XSurface* surface, void*) {

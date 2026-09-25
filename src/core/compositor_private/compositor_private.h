@@ -461,6 +461,7 @@ class CompositorPrivate final {
   wlr_gamma_control_manager_v1* gamma_control_manager_ = nullptr;
   wlr_color_manager_v1* color_manager_ = nullptr;
   wlr_output_layout* output_layout_ = nullptr;
+  wlr_xdg_output_manager_v1* xdg_output_manager_ = nullptr;
   wlr_scene* scene_ = nullptr;
   bool scene_direct_scanout_default_ = true;
   bool scene_calculate_visibility_default_ = true;
