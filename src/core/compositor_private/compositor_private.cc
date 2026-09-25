@@ -1590,6 +1590,11 @@ void CompositorPrivate::Toplevel::OnUnmap(Toplevel* toplevel, void*) {
       toplevel->Surface() != nullptr &&
       toplevel->compositor->seat_->keyboard_state.focused_surface ==
           toplevel->Surface();
+  // Keyboard focus may sit on a layer while an X toplevel still holds
+  // the XWM focus.
+  if (toplevel->IsXWayland()) {
+    toplevel->SetActivated(false);
+  }
   if (toplevel->compositor->window_selector_ != nullptr) {
     toplevel->compositor->window_selector_->SurfaceUnavailable(
         toplevel->Surface());
@@ -2360,12 +2365,10 @@ void CompositorPrivate::FocusToplevel(Toplevel* toplevel) {
     if (previous != nullptr && previous->base->initialized) {
       wlr_xdg_toplevel_set_activated(previous, false);
     }
+  }
 
-    wlr_xwayland_surface* previous_xwayland =
-        wlr_xwayland_surface_try_from_wlr_surface(previous_surface);
-    if (previous_xwayland != nullptr) {
-      wlr_xwayland_surface_activate(previous_xwayland, false);
-    }
+  if (!toplevel->IsXWayland()) {
+    DeactivateXWaylandToplevels();
   }
 
   // Raise, activate and send the current keyboard state.
@@ -2428,9 +2431,19 @@ void CompositorPrivate::FocusNextToplevel(Toplevel* excluding) {
     }
   }
   // No usable window remains.
+  DeactivateXWaylandToplevels();
   wlr_seat_keyboard_clear_focus(seat_);
   if (protocol_manager_ != nullptr) {
     protocol_manager_->UpdateKeyboardFocus(nullptr);
+  }
+}
+
+void CompositorPrivate::DeactivateXWaylandToplevels() {
+  // Only the X toplevel holding the XWM focus is affected
+  for (const std::unique_ptr<Toplevel>& candidate : toplevels_) {
+    if (candidate->IsXWayland()) {
+      candidate->SetActivated(false);
+    }
   }
 }
 
@@ -2715,12 +2728,6 @@ void CompositorPrivate::FocusLayerSurface(LayerSurface* layer_surface) {
         wlr_xdg_toplevel_try_from_wlr_surface(previous_surface);
     if (previous != nullptr && previous->base->initialized) {
       wlr_xdg_toplevel_set_activated(previous, false);
-    }
-
-    wlr_xwayland_surface* previous_xwayland =
-        wlr_xwayland_surface_try_from_wlr_surface(previous_surface);
-    if (previous_xwayland != nullptr) {
-      wlr_xwayland_surface_activate(previous_xwayland, false);
     }
   }
 
@@ -3134,6 +3141,10 @@ void CompositorPrivate::Minimize(Toplevel* toplevel) {
   // Move keyboard focus away if this was the active window.
   if (seat_->keyboard_state.focused_surface == toplevel->Surface()) {
     FocusNextToplevel(toplevel);
+  }
+  // An X toplevel stays activated under shell layers
+  if (toplevel->IsXWayland()) {
+    toplevel->SetActivated(false);
   }
   wlr_seat_pointer_clear_focus(seat_);
   if (protocol_manager_ != nullptr) {
