@@ -354,7 +354,7 @@ class CompositorPrivate final {
   view::Ssd::HitTarget SsdHitAt(const Toplevel* toplevel) const;
   void FocusToplevel(Toplevel* toplevel);
   void FocusNextToplevel(Toplevel* excluding);
-  void DeactivateXWaylandToplevels();
+  void ParkXWaylandFocus();
   bool IsToplevelVisible(const Toplevel* toplevel) const;
   void SwitchWorkspace(int workspace);
   bool MoveToplevelToWorkspace(Toplevel* toplevel, int workspace);

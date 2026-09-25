@@ -41,16 +41,31 @@ class XWaylandManager final {
   void Stop();
   const char* DisplayName() const;
 
+  // The XWM only serves the clipboard while some X toplevel holds its focus.
+  // Whenever the keyboard is on a Wayland surface, that focus is parked on a
+  // hidden input-only window instead, so X clients keep clipboard access
+  // while still seeing themselves as unfocused.
+  void Activate(wlr_xwayland_surface* surface);
+  void Deactivate(wlr_xwayland_surface* surface);
+  void Park();
+
  private:
   static void OnReady(XWaylandManager* manager, void*);
   static void OnNewSurface(XWaylandManager* manager,
                            wlr_xwayland_surface* surface);
+  static void OnParkDestroy(XWaylandManager* manager, void*);
 
   core::CompositorPrivate* compositor;
   wlr_xwayland* handle = nullptr;
+  // X toplevel holding the XWM focus, or null while parked.
+  wlr_xwayland_surface* focused = nullptr;
+  xcb_window_t park_window = XCB_WINDOW_NONE;
+  wlr_xwayland_surface* park_surface = nullptr;
   utils::SignalListener<XWaylandManager, void> ready{this, OnReady};
   utils::SignalListener<XWaylandManager, wlr_xwayland_surface> new_surface{
       this, OnNewSurface};
+  utils::SignalListener<XWaylandManager, void> park_destroy{this,
+                                                            OnParkDestroy};
 };
 
 }  // namespace xwayland

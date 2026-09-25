@@ -94,8 +94,12 @@ bool XWaylandManager::Start(wl_display* display,
 }
 
 void XWaylandManager::Stop() {
+  park_destroy.Disconnect();
   new_surface.Disconnect();
   ready.Disconnect();
+  focused = nullptr;
+  park_surface = nullptr;
+  park_window = XCB_WINDOW_NONE;
   if (handle == nullptr) {
     return;
   }
@@ -107,6 +111,39 @@ void XWaylandManager::Stop() {
 
 const char* XWaylandManager::DisplayName() const {
   return handle == nullptr ? "" : handle->display_name;
+}
+
+void XWaylandManager::Activate(wlr_xwayland_surface* surface) {
+  if (surface == nullptr) {
+    return;
+  }
+  if (surface->override_redirect) {
+    // The XWM cannot focus these. With no X toplevel to keep, unpark so X
+    // input falls back to PointerRoot and the window under the pointer gets
+    // the keys, as a parked focus would swallow them.
+    if (focused == nullptr && park_surface != nullptr) {
+      wlr_xwayland_surface_activate(park_surface, false);
+    }
+    return;
+  }
+  focused = surface;
+  wlr_xwayland_surface_activate(surface, true);
+}
+
+void XWaylandManager::Deactivate(wlr_xwayland_surface* surface) {
+  if (surface != nullptr && surface == focused) {
+    Park();
+  }
+}
+
+void XWaylandManager::Park() {
+  wlr_xwayland_surface* previous = focused;
+  focused = nullptr;
+  if (park_surface != nullptr) {
+    wlr_xwayland_surface_activate(park_surface, true);
+  } else if (previous != nullptr) {
+    wlr_xwayland_surface_activate(previous, false);
+  }
 }
 
 void XWaylandManager::OnReady(XWaylandManager* manager, void*) {
@@ -124,15 +161,49 @@ void XWaylandManager::OnReady(XWaylandManager* manager, void*) {
                             wlr_xcursor_image_get_buffer(image),
                             image->hotspot_x, image->hotspot_y);
   }
+
+  // Created on the XWM's own connection, so mapping it is not redirected and
+  // it arrives through new_surface as a regular managed window. Input-only
+  // windows get no wl_surface: nothing to draw, and the XWM leaves it out of
+  // _NET_CLIENT_LIST.
+  xcb_connection_t* connection =
+      wlr_xwayland_get_xwm_connection(manager->handle);
+  if (connection != nullptr && manager->park_window == XCB_WINDOW_NONE) {
+    const xcb_screen_t* screen =
+        xcb_setup_roots_iterator(xcb_get_setup(connection)).data;
+    manager->park_window = xcb_generate_id(connection);
+    xcb_create_window(connection, XCB_COPY_FROM_PARENT, manager->park_window,
+                      screen->root, -100, -100, 1, 1, 0,
+                      XCB_WINDOW_CLASS_INPUT_ONLY, XCB_COPY_FROM_PARENT, 0,
+                      nullptr);
+    xcb_map_window(connection, manager->park_window);
+    xcb_flush(connection);
+  }
   ABSL_LOG(INFO) << "XWayland server is ready on DISPLAY="
                  << manager->DisplayName() << '.';
 }
 
 void XWaylandManager::OnNewSurface(XWaylandManager* manager,
                                    wlr_xwayland_surface* surface) {
+  if (surface->window_id == manager->park_window) {
+    manager->park_surface = surface;
+    manager->park_destroy.Connect(&surface->events.destroy);
+    wlr_xwayland_surface_set_skip_taskbar(surface, true);
+    wlr_xwayland_surface_set_skip_pager(surface, true);
+    if (manager->focused == nullptr) {
+      manager->Park();
+    }
+    return;
+  }
+
   auto state = std::make_unique<XSurface>(manager->compositor, surface);
   manager->compositor->toplevels_.push_back(std::move(state));
   ABSL_LOG(INFO) << "Got new XWayland window: " << surface->window_id << '.';
+}
+
+void XWaylandManager::OnParkDestroy(XWaylandManager* manager, void*) {
+  manager->park_destroy.Disconnect();
+  manager->park_surface = nullptr;
 }
 
 }  // namespace xwayland

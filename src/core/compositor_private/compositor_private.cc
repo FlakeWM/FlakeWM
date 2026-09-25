@@ -2368,7 +2368,7 @@ void CompositorPrivate::FocusToplevel(Toplevel* toplevel) {
   }
 
   if (!toplevel->IsXWayland()) {
-    DeactivateXWaylandToplevels();
+    ParkXWaylandFocus();
   }
 
   // Raise, activate and send the current keyboard state.
@@ -2431,19 +2431,16 @@ void CompositorPrivate::FocusNextToplevel(Toplevel* excluding) {
     }
   }
   // No usable window remains.
-  DeactivateXWaylandToplevels();
+  ParkXWaylandFocus();
   wlr_seat_keyboard_clear_focus(seat_);
   if (protocol_manager_ != nullptr) {
     protocol_manager_->UpdateKeyboardFocus(nullptr);
   }
 }
 
-void CompositorPrivate::DeactivateXWaylandToplevels() {
-  // Only the X toplevel holding the XWM focus is affected
-  for (const std::unique_ptr<Toplevel>& candidate : toplevels_) {
-    if (candidate->IsXWayland()) {
-      candidate->SetActivated(false);
-    }
+void CompositorPrivate::ParkXWaylandFocus() {
+  if (xwayland_ != nullptr) {
+    xwayland_->Park();
   }
 }
 
@@ -2730,6 +2727,7 @@ void CompositorPrivate::FocusLayerSurface(LayerSurface* layer_surface) {
       wlr_xdg_toplevel_set_activated(previous, false);
     }
   }
+  ParkXWaylandFocus();
 
   if (wlr_keyboard* keyboard = wlr_seat_get_keyboard(seat_);
       keyboard != nullptr) {

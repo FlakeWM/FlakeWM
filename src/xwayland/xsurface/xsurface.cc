@@ -27,6 +27,8 @@
 #include <cstdint>
 #include <limits>
 
+#include "src/xwayland/xwayland_manager/xwayland_manager.h"
+
 namespace flakewm {
 namespace xwayland {
 
@@ -125,8 +127,13 @@ void XSurface::Configure(const wlr_box& box) const {
 }
 
 void XSurface::SetActivated(bool activated) const {
-  if (handle != nullptr) {
-    wlr_xwayland_surface_activate(handle, activated);
+  if (handle == nullptr || compositor->xwayland_ == nullptr) {
+    return;
+  }
+  if (activated) {
+    compositor->xwayland_->Activate(handle);
+  } else {
+    compositor->xwayland_->Deactivate(handle);
   }
 }
 
@@ -281,6 +288,7 @@ void XSurface::OnDestroy(XSurface* surface, void*) {
   surface->set_geometry.Disconnect();
   surface->destroy_xsurface.Disconnect();
   surface->Dissociate();
+  surface->SetActivated(false);
   surface->handle = nullptr;
   Toplevel::OnDestroy(surface, nullptr);
 }
