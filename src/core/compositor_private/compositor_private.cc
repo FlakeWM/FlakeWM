@@ -1435,25 +1435,32 @@ void CompositorPrivate::Toplevel::Configure(const wlr_box& box) const {
   const wlr_box content = ssd == nullptr ? box : ssd->ContentGeometry(box);
   wlr_scene_node_set_position(&scene_tree->node, content.x - geometry.x,
                               content.y - geometry.y);
-  if (handle != nullptr) {
+  if (CanConfigure()) {
     wlr_xdg_toplevel_set_size(handle, content.width, content.height);
+  } else if (handle != nullptr) {
+    pending_configure.size = content;
   }
 }
 
 void CompositorPrivate::Toplevel::SetActivated(bool activated) const {
-  if (handle != nullptr) {
+  if (CanConfigure()) {
     wlr_xdg_toplevel_set_activated(handle, activated);
+  } else if (handle != nullptr) {
+    pending_configure.activated = activated;
   }
 }
 
 void CompositorPrivate::Toplevel::SetMaximizedState(bool maximized) const {
-  if (handle != nullptr) {
+  if (CanConfigure()) {
     wlr_xdg_toplevel_set_maximized(handle, maximized);
+  } else if (handle != nullptr) {
+    pending_configure.maximized = maximized;
   }
 }
 
 void CompositorPrivate::Toplevel::SetResizingState(bool resizing) const {
-  if (handle != nullptr) {
+  // No interactive resize can involve a surface that is not initialized.
+  if (CanConfigure()) {
     wlr_xdg_toplevel_set_resizing(handle, resizing);
   }
 }
@@ -1461,9 +1468,44 @@ void CompositorPrivate::Toplevel::SetResizingState(bool resizing) const {
 void CompositorPrivate::Toplevel::SetMinimizedState(bool) const {}
 
 void CompositorPrivate::Toplevel::SetFullscreenState(bool fullscreen) const {
-  if (handle != nullptr) {
+  if (CanConfigure()) {
     wlr_xdg_toplevel_set_fullscreen(handle, fullscreen);
+  } else if (handle != nullptr) {
+    pending_configure.fullscreen = fullscreen;
   }
+}
+
+void CompositorPrivate::Toplevel::SetTiledState(uint32_t edges) const {
+  if (CanConfigure()) {
+    wlr_xdg_toplevel_set_tiled(handle, edges);
+  } else if (handle != nullptr) {
+    pending_configure.tiled = edges;
+  }
+}
+
+bool CompositorPrivate::Toplevel::CanConfigure() const {
+  // A null-buffer unmap resets `initialized` until the next initial commit.
+  return handle != nullptr && handle->base->initialized;
+}
+
+void CompositorPrivate::Toplevel::SendInitialConfigure() const {
+  const PendingConfigure pending = std::exchange(pending_configure, {});
+  if (pending.tiled.has_value()) {
+    wlr_xdg_toplevel_set_tiled(handle, *pending.tiled);
+  }
+  if (pending.maximized.has_value()) {
+    wlr_xdg_toplevel_set_maximized(handle, *pending.maximized);
+  }
+  if (pending.fullscreen.has_value()) {
+    wlr_xdg_toplevel_set_fullscreen(handle, *pending.fullscreen);
+  }
+  if (pending.activated.has_value()) {
+    wlr_xdg_toplevel_set_activated(handle, *pending.activated);
+  }
+
+  // Without a compositor-chosen size, clients shall hemp themselves.
+  const wlr_box size = pending.size.value_or(wlr_box{});
+  wlr_xdg_toplevel_set_size(handle, size.width, size.height);
 }
 
 void CompositorPrivate::Toplevel::Restack() const {}
@@ -1611,9 +1653,8 @@ void CompositorPrivate::Toplevel::OnCommit(Toplevel* toplevel, void*) {
 
   toplevel->UpdateCapabilities();
 
-  // The initial configure leaves sizing to the client.
   if (toplevel->handle->base->initial_commit) {
-    wlr_xdg_toplevel_set_size(toplevel->handle, 0, 0);
+    toplevel->SendInitialConfigure();
   }
 
   const wlr_box geometry = toplevel->Geometry();
@@ -1830,8 +1871,14 @@ CompositorPrivate::Popup::Popup(CompositorPrivate* compositor,
       destroy(this, OnDestroy) {}
 
 void CompositorPrivate::Popup::OnCommit(Popup* popup, void*) {
-  // Initial configure lets the popup client submit its first buffer.
   if (popup->handle != nullptr && popup->handle->base->initial_commit) {
+    wlr_layer_surface_v1* layer =
+        popup->handle->parent == nullptr
+            ? nullptr
+            : wlr_layer_surface_v1_try_from_wlr_surface(popup->handle->parent);
+    if (layer != nullptr && layer->data != nullptr) {
+      static_cast<LayerSurface*>(layer->data)->UnconstrainPopup(popup->handle);
+    }
     wlr_xdg_surface_schedule_configure(popup->handle->base);
   }
   // Keep the compositor-drawn shadow/border sized to the popup's content box.
@@ -2308,7 +2355,7 @@ void CompositorPrivate::FocusToplevel(Toplevel* toplevel) {
   if (previous_surface != nullptr) {
     wlr_xdg_toplevel* previous =
         wlr_xdg_toplevel_try_from_wlr_surface(previous_surface);
-    if (previous != nullptr) {
+    if (previous != nullptr && previous->base->initialized) {
       wlr_xdg_toplevel_set_activated(previous, false);
     }
 
@@ -2664,7 +2711,7 @@ void CompositorPrivate::FocusLayerSurface(LayerSurface* layer_surface) {
   if (previous_surface != nullptr) {
     wlr_xdg_toplevel* previous =
         wlr_xdg_toplevel_try_from_wlr_surface(previous_surface);
-    if (previous != nullptr) {
+    if (previous != nullptr && previous->base->initialized) {
       wlr_xdg_toplevel_set_activated(previous, false);
     }
 
@@ -2925,9 +2972,7 @@ void CompositorPrivate::SetMaximized(Toplevel* toplevel, bool maximized) {
       toplevel->tiled = false;
       toplevel->tile_position_pending = false;
       if (toplevel->ssd != nullptr) toplevel->ssd->SetTiled(false);
-      if (toplevel->handle != nullptr) {
-        wlr_xdg_toplevel_set_tiled(toplevel->handle, 0);
-      }
+      toplevel->SetTiledState(0);
       if (toplevel->has_restore_box) {
         toplevel->Configure(toplevel->restore_box);
         toplevel->restore_position_pending = true;
@@ -2957,9 +3002,7 @@ void CompositorPrivate::SetMaximized(Toplevel* toplevel, bool maximized) {
   toplevel->tiled = false;
   toplevel->tile_position_pending = false;
   if (toplevel->ssd != nullptr) toplevel->ssd->SetTiled(false);
-  if (toplevel->handle != nullptr) {
-    wlr_xdg_toplevel_set_tiled(toplevel->handle, 0);
-  }
+  toplevel->SetTiledState(0);
 
   toplevel->maximized = maximized;
   if (toplevel->ssd != nullptr) {
@@ -3059,11 +3102,8 @@ void CompositorPrivate::TileToplevel(Toplevel* toplevel,
   }
   RebuildSurfaceClip(toplevel);
   UpdateCsdShadow(toplevel);
-  if (toplevel->handle != nullptr) {
-    wlr_xdg_toplevel_set_tiled(
-        toplevel->handle,
-        WLR_EDGE_TOP | WLR_EDGE_BOTTOM | WLR_EDGE_LEFT | WLR_EDGE_RIGHT);
-  }
+  toplevel->SetTiledState(WLR_EDGE_TOP | WLR_EDGE_BOTTOM | WLR_EDGE_LEFT |
+                          WLR_EDGE_RIGHT);
   toplevel->SetMaximizedState(false);
   toplevel->Configure(target);
   if (toplevel->minimized) {

@@ -25,6 +25,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -218,9 +219,15 @@ class CompositorPrivate final {
     virtual void SetFullscreenState(bool fullscreen) const;
     virtual void Restack() const;
     virtual void Close() const;
+    void SetTiledState(uint32_t edges) const;
     wlr_box FrameGeometry() const;
     wlr_box LayoutFrame() const;
     void UpdateCapabilities();
+    // wlroots asserts if a configure is scheduled before the client's initial
+    // commit, but protocol requests (dde_shell, treeland, etc.) can change a
+    // window's state before then.
+    bool CanConfigure() const;
+    void SendInitialConfigure() const;
 
     static void OnMap(Toplevel* toplevel, void*);
     static void OnUnmap(Toplevel* toplevel, void*);
@@ -253,6 +260,15 @@ class CompositorPrivate final {
     bool tile_position_pending = false;
     bool capabilities_advertised = false;
     uint32_t advertised_capabilities = 0;
+    struct PendingConfigure {
+      std::optional<wlr_box> size;
+      std::optional<bool> activated;
+      std::optional<bool> maximized;
+      std::optional<bool> fullscreen;
+      std::optional<uint32_t> tiled;
+    };
+    // Written by the const state setters while !CanConfigure().
+    mutable PendingConfigure pending_configure;
     wlr_box restore_box = {};
     wlr_box maximized_box = {};
     wlr_box tiled_box = {};

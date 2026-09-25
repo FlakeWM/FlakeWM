@@ -130,7 +130,7 @@ void LayerSurface::OnCommit(LayerSurface* layer_surface, void*) {
 
 void LayerSurface::OnNewPopup(LayerSurface* layer_surface,
                               wlr_xdg_popup* popup) {
-  layer_surface->UnconstrainPopup(popup);
+  // Unconstrained on its initial commit in CompositorPrivate::Popup::OnCommit.
   auto state = std::make_unique<CompositorPrivate::Popup>(
       layer_surface->compositor, popup);
   state->scene_tree = wlr_scene_xdg_surface_create(
