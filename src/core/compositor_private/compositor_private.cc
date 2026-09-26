@@ -873,6 +873,7 @@ bool CompositorPrivate::Start(const utils::StartupArgs& startup_args) {
   touch_frame_.Connect(&cursor_->events.touch_frame);
   request_cursor_.Connect(&seat_->events.request_set_cursor);
   pointer_focus_change_.Connect(&seat_->pointer_state.events.focus_change);
+  keyboard_focus_change_.Connect(&seat_->keyboard_state.events.focus_change);
   request_selection_.Connect(&seat_->events.request_set_selection);
   selection_persist_ =
       std::make_unique<input::SelectionPersist>(display_, seat_);
@@ -2336,6 +2337,9 @@ void CompositorPrivate::FocusToplevel(Toplevel* toplevel) {
     if (layer_surface->mapped && layer_surface->handle != nullptr &&
         layer_surface->handle->current.keyboard_interactive ==
             ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE) {
+      ABSL_LOG(INFO) << "Focus for " << DescribeSurface(toplevel->Surface())
+                     << " is kept by "
+                     << DescribeSurface(layer_surface->handle->surface);
       FocusLayerSurface(layer_surface);
       return;
     }
@@ -4181,6 +4185,56 @@ void CompositorPrivate::OnPointerFocusChange(
   }
 }
 
+void CompositorPrivate::OnKeyboardFocusChange(
+    CompositorPrivate* compositor,
+    wlr_seat_keyboard_focus_change_event* event) {
+  ABSL_LOG(INFO) << "Keyboard focus: "
+                 << compositor->DescribeSurface(event->old_surface) << " -> "
+                 << compositor->DescribeSurface(event->new_surface);
+}
+
+std::string CompositorPrivate::DescribeSurface(wlr_surface* surface) const {
+  if (surface == nullptr || surface->resource == nullptr) {
+    return "none";
+  }
+
+  pid_t pid = 0;
+  wl_client_get_credentials(wl_resource_get_client(surface->resource), &pid,
+                            nullptr, nullptr);
+  if (wlr_xwayland_surface* xsurface =
+          wlr_xwayland_surface_try_from_wlr_surface(surface);
+      xsurface != nullptr) {
+    pid = xsurface->pid;
+    return absl::StrCat(
+        xsurface->override_redirect ? "X11 override-redirect" : "X11",
+        " class=", xsurface->class_ == nullptr ? "" : xsurface->class_,
+        " title=", xsurface->title == nullptr ? "" : xsurface->title, " (pid ",
+        pid, ")");
+  }
+
+  if (const LayerSurface* layer_surface = LayerSurfaceFor(surface);
+      layer_surface != nullptr && layer_surface->handle != nullptr) {
+    return absl::StrCat(
+        "layer ",
+        layer_surface->handle->namespace_ == nullptr
+            ? ""
+            : layer_surface->handle->namespace_,
+        " keyboard=", layer_surface->handle->current.keyboard_interactive,
+        " (pid ", pid, ")");
+  }
+
+  if (const Toplevel* toplevel = ToplevelForSurface(surface);
+      toplevel != nullptr) {
+    return absl::StrCat(
+        "toplevel app_id=",
+        toplevel->AppId() == nullptr ? "" : toplevel->AppId(),
+        " title=", toplevel->Title() == nullptr ? "" : toplevel->Title(),
+        " (pid ", pid, ")");
+  }
+
+  return absl::StrCat("surface (pid ", pid, ")");
+}
+
 void CompositorPrivate::OnRequestSelection(
     CompositorPrivate* compositor,
     wlr_seat_request_set_selection_event* event) {
@@ -4588,6 +4642,7 @@ void CompositorPrivate::Destroy() {
   request_primary_selection_.Disconnect();
   request_selection_.Disconnect();
   pointer_focus_change_.Disconnect();
+  keyboard_focus_change_.Disconnect();
   request_cursor_.Disconnect();
   touch_frame_.Disconnect();
   touch_cancel_.Disconnect();

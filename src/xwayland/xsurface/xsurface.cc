@@ -276,6 +276,8 @@ void XSurface::OnRequestMinimize(XSurface* surface,
 
 void XSurface::OnRequestActivate(XSurface* surface, void*) {
   if (surface->WantsFocus()) {
+    ABSL_LOG(INFO) << "X11 window " << surface->handle->window_id
+                   << " activated.";
     surface->compositor->FocusToplevel(surface);
   }
 }

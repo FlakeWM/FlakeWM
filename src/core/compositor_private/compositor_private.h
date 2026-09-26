@@ -422,6 +422,10 @@ class CompositorPrivate final {
                               wlr_seat_pointer_request_set_cursor_event* event);
   static void OnPointerFocusChange(CompositorPrivate* compositor,
                                    wlr_seat_pointer_focus_change_event* event);
+  static void OnKeyboardFocusChange(
+      CompositorPrivate* compositor,
+      wlr_seat_keyboard_focus_change_event* event);
+  std::string DescribeSurface(wlr_surface* surface) const;
   static void OnRequestSelection(CompositorPrivate* compositor,
                                  wlr_seat_request_set_selection_event* event);
   static void OnRequestPrimarySelection(
@@ -534,6 +538,8 @@ class CompositorPrivate final {
       request_cursor_{this, OnRequestCursor};
   utils::SignalListener<CompositorPrivate, wlr_seat_pointer_focus_change_event>
       pointer_focus_change_{this, OnPointerFocusChange};
+  utils::SignalListener<CompositorPrivate, wlr_seat_keyboard_focus_change_event>
+      keyboard_focus_change_{this, OnKeyboardFocusChange};
   utils::SignalListener<CompositorPrivate, wlr_seat_request_set_selection_event>
       request_selection_{this, OnRequestSelection};
   utils::SignalListener<CompositorPrivate,
