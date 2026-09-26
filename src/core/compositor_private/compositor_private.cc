@@ -1427,6 +1427,16 @@ wlr_surface* CompositorPrivate::Toplevel::Surface() const {
   return handle == nullptr ? nullptr : handle->base->surface;
 }
 
+wlr_surface* CompositorPrivate::Toplevel::ParentSurface() const {
+  return handle == nullptr || handle->parent == nullptr
+             ? nullptr
+             : handle->parent->base->surface;
+}
+
+bool CompositorPrivate::Toplevel::RequestedPosition() const {
+  return position_requested;
+}
+
 wlr_box CompositorPrivate::Toplevel::Geometry() const {
   return handle == nullptr ? wlr_box{} : handle->base->geometry;
 }
@@ -1581,6 +1591,10 @@ void CompositorPrivate::Toplevel::OnMap(Toplevel* toplevel, void*) {
     toplevel->compositor->RebuildSurfaceClip(toplevel);
     toplevel->compositor->UpdateCsdShadow(toplevel);
   }
+  if (!toplevel->placed) {
+    toplevel->placed = true;
+    toplevel->compositor->PlaceNewToplevel(toplevel);
+  }
   toplevel->compositor->ConstrainToUsableArea(toplevel);
   if (toplevel->WantsFocus()) {
     toplevel->compositor->FocusToplevel(toplevel);
@@ -1705,6 +1719,9 @@ void CompositorPrivate::Toplevel::OnCommit(Toplevel* toplevel, void*) {
                                 toplevel->restore_box.x - frame.x,
                                 toplevel->restore_box.y - frame.y);
     toplevel->restore_position_pending = false;
+  }
+  if (toplevel->keep_centered) {
+    toplevel->compositor->KeepCentered(toplevel);
   }
   if (toplevel->compositor->protocol_manager_ != nullptr) {
     toplevel->compositor->protocol_manager_->UpdateToplevel(
@@ -2971,6 +2988,76 @@ void CompositorPrivate::ConstrainToUsableArea(Toplevel* toplevel) {
   }
 }
 
+void CompositorPrivate::PlaceNewToplevel(Toplevel* toplevel) {
+  // New floating windows open centered in the usable area of a screen: their
+  // parent's for dialogs, otherwise the one under the pointer. Shell roles
+  // reparented out of the toplevel tree (panels, OSDs) are not windows.
+  if (toplevel == nullptr || !toplevel->IsAlive() ||
+      toplevel->scene_tree == nullptr || !toplevel->CanManage() ||
+      toplevel->maximized || toplevel->tiled ||
+      toplevel->RequestedFullscreen() || toplevel->RequestedPosition() ||
+      toplevel->scene_tree->node.parent != toplevel_tree_) {
+    return;
+  }
+  const wlr_box frame = toplevel->LayoutFrame();
+  if (frame.width <= 0 || frame.height <= 0) {
+    return;
+  }
+  double anchor_x = cursor_->x;
+  double anchor_y = cursor_->y;
+  if (const Toplevel* parent = ToplevelForSurface(toplevel->ParentSurface());
+      parent != nullptr && parent != toplevel && parent->mapped &&
+      parent->scene_tree != nullptr) {
+    const wlr_box parent_frame = parent->LayoutFrame();
+    anchor_x = parent_frame.x + parent_frame.width / 2.0;
+    anchor_y = parent_frame.y + parent_frame.height / 2.0;
+  }
+  wlr_output* output =
+      wlr_output_layout_output_at(output_layout_, anchor_x, anchor_y);
+  if (output == nullptr) {
+    output = wlr_output_layout_get_center_output(output_layout_);
+  }
+  if (output == nullptr) {
+    return;
+  }
+  const wlr_box usable = UsableOutputBox(output);
+  if (usable.width <= 0 || usable.height <= 0) {
+    return;
+  }
+  MoveToplevelFrame(toplevel,
+                    usable.x + std::max(0, (usable.width - frame.width) / 2),
+                    usable.y + std::max(0, (usable.height - frame.height) / 2));
+  // X size changes arrive as configure requests carrying their own position.
+  if (!toplevel->IsXWayland()) {
+    toplevel->keep_centered = true;
+    toplevel->centered_frame = toplevel->LayoutFrame();
+  }
+  // A window torn off by xdg-toplevel-drag follows the pointer instead.
+  if (protocol_manager_ != nullptr) {
+    protocol_manager_->MoveDrag();
+  }
+}
+
+void CompositorPrivate::KeepCentered(Toplevel* toplevel) {
+  // E.g. GTK may map with client-side shadows, then shrink once it learns
+  // the decoration is server-side; keep the center rather than the corner.
+  if (!toplevel->mapped || toplevel->maximized || toplevel->tiled ||
+      toplevel->RequestedFullscreen() || toplevel->RequestedPosition()) {
+    toplevel->keep_centered = false;
+    return;
+  }
+  const wlr_box frame = toplevel->LayoutFrame();
+  const wlr_box& centered = toplevel->centered_frame;
+  if (frame.width <= 0 || frame.height <= 0 ||
+      (frame.width == centered.width && frame.height == centered.height)) {
+    return;
+  }
+  MoveToplevelFrame(toplevel, centered.x + (centered.width - frame.width) / 2,
+                    centered.y + (centered.height - frame.height) / 2);
+  ConstrainToUsableArea(toplevel);
+  toplevel->centered_frame = toplevel->LayoutFrame();
+}
+
 void CompositorPrivate::SetMaximized(Toplevel* toplevel, bool maximized) {
   // State changes need both a live protocol handle and a scene node.
   if (toplevel == nullptr || !toplevel->IsAlive() ||
@@ -3316,6 +3403,8 @@ void CompositorPrivate::BeginInteractive(Toplevel* toplevel, CursorMode mode,
     return;
   }
   if (tile_animation_ != nullptr) tile_animation_->Cancel();
+  // The user now decides where the window goes.
+  toplevel->keep_centered = false;
 
   // Normalize a maximized or tiled window before it starts moving.
   if (mode == CursorMode::kMove && (toplevel->maximized || toplevel->tiled)) {

@@ -98,6 +98,28 @@ wlr_surface* XSurface::Surface() const {
   return handle == nullptr ? nullptr : handle->surface;
 }
 
+wlr_surface* XSurface::ParentSurface() const {
+  return handle == nullptr || handle->parent == nullptr
+             ? nullptr
+             : handle->parent->surface;
+}
+
+bool XSurface::RequestedPosition() const {
+  // ICCCM: the user (xterm -geometry) or the program chose the position.
+  // Toolkits routinely claim a program position of 0,0 without meaning it, so
+  // like other window managers only a non-origin one counts.
+  if (position_requested) {
+    return true;
+  }
+  if (handle == nullptr || handle->size_hints == nullptr) {
+    return false;
+  }
+  const uint32_t flags = handle->size_hints->flags;
+  return (flags & XCB_ICCCM_SIZE_HINT_US_POSITION) != 0 ||
+         ((flags & XCB_ICCCM_SIZE_HINT_P_POSITION) != 0 &&
+          (handle->x != 0 || handle->y != 0));
+}
+
 wlr_box XSurface::Geometry() const {
   if (handle == nullptr) {
     return {};

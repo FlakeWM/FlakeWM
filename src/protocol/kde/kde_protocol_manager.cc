@@ -331,6 +331,7 @@ class KdeProtocolManager::Impl final {
     wlr_output* output = nullptr;
     int32_t x = 0;
     int32_t y = 0;
+    bool position_set = false;
     uint32_t role = ORG_KDE_PLASMA_SURFACE_ROLE_NORMAL;
     uint32_t panel_behavior =
         ORG_KDE_PLASMA_SURFACE_PANEL_BEHAVIOR_ALWAYS_VISIBLE;
@@ -745,6 +746,7 @@ class KdeProtocolManager::Impl final {
         std::clamp(x, -kMaximumSceneCoordinate, kMaximumSceneCoordinate);
     surface->y =
         std::clamp(y, -kMaximumSceneCoordinate, kMaximumSceneCoordinate);
+    surface->position_set = true;
     surface->manager->ApplyPlasmaSurface(surface);
   }
 
@@ -871,8 +873,12 @@ class KdeProtocolManager::Impl final {
     if (parent != nullptr && toplevel->scene_tree->node.parent != parent) {
       wlr_scene_node_reparent(&toplevel->scene_tree->node, parent);
     }
-    wlr_scene_node_set_position(&toplevel->scene_tree->node, surface->x,
-                                surface->y);
+    // Other requests reapply the surface too; only move on set_position.
+    if (surface->position_set) {
+      toplevel->position_requested = true;
+      wlr_scene_node_set_position(&toplevel->scene_tree->node, surface->x,
+                                  surface->y);
+    }
     wlr_scene_node_set_enabled(&toplevel->scene_tree->node, !surface->hidden);
   }
 

@@ -211,6 +211,9 @@ class CompositorPrivate final {
     virtual const char* Title() const;
     virtual const char* AppId() const;
     virtual wlr_surface* Surface() const;
+    virtual wlr_surface* ParentSurface() const;
+    // The client chose where the window goes, so placement leaves it alone.
+    virtual bool RequestedPosition() const;
     virtual wlr_box Geometry() const;
     virtual void Configure(const wlr_box& box) const;
     virtual void SetActivated(bool activated) const;
@@ -250,6 +253,14 @@ class CompositorPrivate final {
     wlr_xdg_toplevel* handle = nullptr;
     wlr_scene_tree* scene_tree = nullptr;
     bool mapped = false;
+    // Set once the first map has placed the window; later maps keep it.
+    bool placed = false;
+    // Set by shell protocols that let the client position the window.
+    bool position_requested = false;
+    // A centered window follows size changes around its center until the user
+    // moves it: clients may settle their size after the first map.
+    bool keep_centered = false;
+    wlr_box centered_frame = {};
     bool maximized = false;
     bool minimized = false;
     bool kept_above = false;
@@ -377,6 +388,8 @@ class CompositorPrivate final {
   void FitToplevelsToUsableArea(Output* output, const wlr_box& old_usable);
   void MoveToplevelFrame(Toplevel* toplevel, int x, int y);
   void ConstrainToUsableArea(Toplevel* toplevel);
+  void PlaceNewToplevel(Toplevel* toplevel);
+  void KeepCentered(Toplevel* toplevel);
   void SetMaximized(Toplevel* toplevel, bool maximized);
   void ToggleMaximized(Toplevel* toplevel);
   void TileToplevel(Toplevel* toplevel, view::SplitScreenSwitcher::Tile tile);

@@ -346,6 +346,7 @@ void UkuiProtocolManager::Impl::ApplyShellSurface(ShellSurface* state) const {
     wlr_scene_node_reparent(&toplevel->scene_tree->node, parent);
   }
   if (state->position_set) {
+    toplevel->position_requested = true;
     wlr_scene_node_set_position(&toplevel->scene_tree->node, state->x,
                                 state->y);
     if (wl_resource_get_version(state->resource) >= 3) {

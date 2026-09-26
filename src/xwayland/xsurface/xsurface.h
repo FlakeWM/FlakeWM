@@ -47,6 +47,8 @@ class XSurface final : public core::CompositorPrivate::Toplevel {
   const char* Title() const override;
   const char* AppId() const override;
   wlr_surface* Surface() const override;
+  wlr_surface* ParentSurface() const override;
+  bool RequestedPosition() const override;
   wlr_box Geometry() const override;
   void Configure(const wlr_box& box) const override;
   void SetActivated(bool activated) const override;
